@@ -7,10 +7,11 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 ![Language](https://img.shields.io/badge/language-TypeScript-3178c6?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)
+[![Tests](https://github.com/<OWNER>/<REPO>/actions/workflows/test.yml/badge.svg)](https://github.com/<OWNER>/<REPO>/actions/workflows/test.yml)
 
 **Created by the MaxxPainn Team**
 🌐 [https://maxxpainn.com](https://maxxpainn.com)
-📧 Support: [athello@maxxpainn.com](mailto:athello@maxxpainn.com)
+📧 Support: [hello@maxxpainn.com](mailto:hello@maxxpainn.com)
 
 ---
 
