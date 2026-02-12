@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdir, rm, writeFile, readFile, exists } from "fs/promises";
+import { mkdir, rm, writeFile, readFile } from "fs/promises";
+import { existsSync } from "fs"; // Import existsSync from 'fs' instead
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -64,7 +65,8 @@ describe("Process List Management", () => {
     ];
     await writeFile(PROCESS_LIST_FILE, JSON.stringify(processes, null, 2));
 
-    const fileExists = await exists(PROCESS_LIST_FILE);
+    // Changed to synchronous check
+    const fileExists = existsSync(PROCESS_LIST_FILE);
     expect(fileExists).toBe(true);
 
     const content = JSON.parse(await readFile(PROCESS_LIST_FILE, "utf-8"));
