@@ -1,11 +1,67 @@
 {
   "name": "bm2",
-  "module": "index.ts",
-  "type": "module",
-  "devDependencies": {
-    "@types/bun": "latest"
+  "version": "1.0.0",
+  "description": "A blazing-fast, full-featured process manager built entirely on Bun native APIs. The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "bm2": "./src/index.ts"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun test",
+    "lint": "bun x tsc --noEmit",
+    "prepublishOnly": "bun test"
+  },
+  "keywords": [
+    "bun",
+    "process-manager",
+    "pm2",
+    "pm2-alternative",
+    "cluster",
+    "daemon",
+    "production",
+    "deployment",
+    "monitoring",
+    "prometheus",
+    "zero-downtime",
+    "reload",
+    "log-management",
+    "health-check",
+    "bm2"
+  ],
+  "author": {
+    "name": "MaxxPainn",
+    "email": "hello@maxxpainn.com",
+    "url": "https://maxxpainn.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bun-bm2/bm2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bun-bm2/bm2/issues",
+    "email": "hello@maxxpainn.com"
+  },
+  "homepage": "https://github.com/bun-bm2/bm2#readme",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.0.0"
   }
 }
