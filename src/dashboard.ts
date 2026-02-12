@@ -13,15 +13,17 @@
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
- 
+
 import { ProcessManager } from "./process-manager";
 import { getDashboardHTML } from "./dashboard-ui";
 import { DASHBOARD_PORT, METRICS_PORT } from "./constants";
 import type { Server, ServerWebSocket } from "bun";
 
 export class Dashboard {
-  private server: Server | null = null;
-  private metricsServer: Server | null = null;
+
+  private server: Server<unknown> | null = null;
+  private metricsServer: Server<unknown> | null = null;
+
   private clients: Set<ServerWebSocket<unknown>> = new Set();
   private pm: ProcessManager;
   private updateInterval: ReturnType<typeof setInterval> | null = null;
@@ -32,13 +34,13 @@ export class Dashboard {
 
   start(port: number = DASHBOARD_PORT, metricsPort: number = METRICS_PORT) {
     // Dashboard + WebSocket server
-    this.server = Bun.serve({
+    this.server = Bun.serve<unknown>({
       port,
       fetch: (req, server) => {
         const url = new URL(req.url);
 
         if (url.pathname === "/ws") {
-          if (server.upgrade(req)) return;
+          if (server.upgrade(req, { data: undefined })) return;
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
 
@@ -122,7 +124,8 @@ export class Dashboard {
 
   private async handleAction(pathname: string, req: Request): Promise<Response> {
     try {
-      const body = await req.json().catch(() => ({}));
+
+        const body = (await req.json()) as { target?: string; count?: number };
 
       switch (pathname) {
         case "/api/restart":
@@ -132,9 +135,9 @@ export class Dashboard {
         case "/api/reload":
           return Response.json(await this.pm.reload(body.target || "all"));
         case "/api/delete":
-          return Response.json(await this.pm.del(body.target));
+          return Response.json(await this.pm.del(body.target!));
         case "/api/scale":
-          return Response.json(await this.pm.scale(body.target, body.count));
+          return Response.json(await this.pm.scale(body.target!, body.count!));
         case "/api/flush":
           await this.pm.flushLogs(body.target);
           return Response.json({ success: true });

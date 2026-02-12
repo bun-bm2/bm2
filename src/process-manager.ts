@@ -237,16 +237,17 @@
    async scale(target: string | number, count: number): Promise<ProcessState[]> {
      const containers = this.resolveTarget(target);
      if (containers.length === 0) return [];
- 
-     const baseName = containers[0].name.replace(/-\d+$/, "");
+   
+     const first = containers[0]!;
+     const baseName = first.name.replace(/-\d+$/, "");
      const currentCount = containers.length;
- 
+   
      if (count > currentCount) {
        // Scale up
        const toAdd = count - currentCount;
-       const baseConfig = containers[0].config;
+       const baseConfig = first.config;
        const states: ProcessState[] = [];
- 
+   
        for (let i = 0; i < toAdd; i++) {
          const result = await this.start({
            name: `${baseName}-${currentCount + i}`,
@@ -262,7 +263,7 @@
          });
          states.push(...result);
        }
- 
+   
        return [...containers.map((c) => c.getState()), ...states];
      } else if (count < currentCount) {
        // Scale down
@@ -273,10 +274,10 @@
        }
        return containers.slice(0, count).map((c) => c.getState());
      }
- 
+   
      return containers.map((c) => c.getState());
    }
- 
+   
    list(): ProcessState[] {
      return Array.from(this.processes.values()).map((p) => p.getState());
    }

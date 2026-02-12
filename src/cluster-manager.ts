@@ -13,7 +13,7 @@
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
- import { Subprocess } from "bun";
+ import type { Subprocess } from "bun";
  import type { ProcessDescription } from "./types";
  import { getCpuCount } from "./utils";
  

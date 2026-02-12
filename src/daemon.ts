@@ -217,4 +217,17 @@ const shutdown = async () => {
 };
 
 process.on("SIGTERM", shutdown);
-process.
+process.on("SIGINT", shutdown);
+process.on("SIGHUP", shutdown);
+
+// Handle uncaught errors to keep daemon alive
+process.on("uncaughtException", (err) => {
+  console.error("[bm2] Uncaught exception:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("[bm2] Unhandled rejection:", err);
+});
+
+console.log(`[bm2] Daemon running (PID: ${process.pid})`);
+console.log(`[bm2] Socket: ${DAEMON_SOCKET}`);

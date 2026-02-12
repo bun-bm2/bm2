@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdir, rm, writeFile, readFile, exists } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -81,8 +81,11 @@ describe("Process List Management", () => {
       await readFile(PROCESS_LIST_FILE, "utf-8")
     );
     expect(loaded).toHaveLength(1);
-    expect(loaded[0].name).toBe("loaded-app");
-    expect(loaded[0].status).toBe("online");
+
+    const first = loaded[0];
+    expect(first).toBeDefined();
+    expect(first!.name).toBe("loaded-app");
+    expect(first!.status).toBe("online");
   });
 
   test("should assign incremental IDs", () => {

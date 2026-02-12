@@ -33,10 +33,17 @@ export class HealthChecker {
   ) {
     this.stopCheck(processId);
 
-    const state = {
+    const state: {
+      config: HealthCheckConfig;
+      timer: ReturnType<typeof setInterval>;
+      consecutiveFails: number;
+      lastStatus: "healthy" | "unhealthy" | "unknown";
+      lastCheck: number;
+      lastResponseTime: number;
+    } = {
       config,
       consecutiveFails: 0,
-      lastStatus: "unknown" as const,
+      lastStatus: "unknown",
       lastCheck: 0,
       lastResponseTime: 0,
       timer: setInterval(async () => {

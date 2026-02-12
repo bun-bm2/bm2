@@ -38,8 +38,9 @@ export class Monitor {
         if (await statusFile.exists()) {
           const content = await statusFile.text();
           const vmRss = content.match(/VmRSS:\s+(\d+)\s+kB/);
-          if (vmRss) memory = parseInt(vmRss[1]) * 1024;
-
+          
+          if (vmRss) memory = parseInt(vmRss[1]!) * 1024;
+         
           // Count file descriptors
           try {
             const { readdirSync } = require("fs");
@@ -51,8 +52,10 @@ export class Monitor {
         if (await statFile.exists()) {
           const stat = await statFile.text();
           const parts = stat.split(" ");
-          const utime = parseInt(parts[13]) || 0;
-          const stime = parseInt(parts[14]) || 0;
+          
+          const utime = parseInt(parts[13]!) || 0;
+          const stime = parseInt(parts[14]!) || 0;
+          
           // Simplified CPU calculation
           cpu = (utime + stime) / 100;
         }
@@ -66,10 +69,11 @@ export class Monitor {
         );
         const output = await new Response(ps.stdout).text();
         const parts = output.trim().split(/\s+/);
+        
         if (parts.length >= 2) {
           return {
-            memory: parseInt(parts[0]) * 1024,
-            cpu: parseFloat(parts[1]),
+            memory: parseInt(parts[0]!) * 1024,
+            cpu: parseFloat(parts[1]!),
           };
         }
       }
@@ -117,7 +121,7 @@ export class Monitor {
   }
 
   getLatest(): MetricSnapshot | null {
-    return this.history.length > 0 ? this.history[this.history.length - 1] : null;
+    return this.history.length > 0 ? this.history[this.history.length - 1]! : null;
   }
 
   async saveMetrics(): Promise<void> {

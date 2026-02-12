@@ -170,7 +170,7 @@ export class LogManager {
           .sort()
           .reverse();
         for (let i = options.retain; i < rotated.length; i++) {
-          unlinkSync(join(dir, rotated[i]));
+          unlinkSync(join(dir, rotated[i]!));
         }
       } catch {}
 

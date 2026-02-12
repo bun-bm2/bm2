@@ -13,9 +13,12 @@
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
- 
+
 import { mkdirSync, existsSync } from "fs";
-import { ALL_DIRS } from "./constants";
+import { join } from "path";
+import { ALL_DIRS, BM2_HOME } from "./constants";
+
+export const DUMP_FILE = join(BM2_HOME, "dump.json");
 
 export function ensureDirs() {
   for (const dir of ALL_DIRS) {
@@ -29,7 +32,7 @@ export function parseMemory(value: string | number): number {
   if (typeof value === "number") return value;
   const match = value.match(/^(\d+(?:\.\d+)?)\s*(K|M|G|T)?B?$/i);
   if (!match) throw new Error(`Invalid memory value: ${value}`);
-  const num = parseFloat(match[1]);
+  const num = parseFloat(match[1]!);
   const unit = (match[2] || "").toUpperCase();
   const multipliers: Record<string, number> = {
     "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4,
@@ -94,24 +97,12 @@ export function getSystemInfo() {
 export function treeKill(pid: number, signal: string = "SIGTERM"): Promise<void> {
   return new Promise(async (resolve) => {
     try {
-      if (process.platform === "linux") {
-        // Get all child pids from /proc
-        const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
-        const output = await new Response(result.stdout).text();
-        const childPids = output.trim().split("\n").filter(Boolean).map(Number);
+      const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
+      const output = await new Response(result.stdout).text();
+      const childPids = output.trim().split("\n").filter(Boolean).map(Number);
 
-        for (const childPid of childPids) {
-          await treeKill(childPid, signal);
-        }
-      } else {
-        // macOS
-        const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
-        const output = await new Response(result.stdout).text();
-        const childPids = output.trim().split("\n").filter(Boolean).map(Number);
-
-        for (const childPid of childPids) {
-          await treeKill(childPid, signal);
-        }
+      for (const childPid of childPids) {
+        await treeKill(childPid, signal);
       }
 
       try {
@@ -123,24 +114,23 @@ export function treeKill(pid: number, signal: string = "SIGTERM"): Promise<void>
 }
 
 export function parseCron(expression: string): { next: () => Date } {
-  // Simple cron parser supporting: minute hour dayOfMonth month dayOfWeek
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) throw new Error(`Invalid cron: ${expression}`);
 
-  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts;
+  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts as [string, string, string, string, string];
 
-  function matchField(value: number, expr: string, max: number): boolean {
+  function matchField(value: number, expr: string, _max: number): boolean {
     if (expr === "*") return true;
 
     for (const part of expr.split(",")) {
       if (part.includes("/")) {
         const [range, step] = part.split("/");
-        const stepNum = parseInt(step);
-        const start = range === "*" ? 0 : parseInt(range);
+        const stepNum = parseInt(step!);
+        const start = range === "*" ? 0 : parseInt(range!);
         if ((value - start) % stepNum === 0 && value >= start) return true;
       } else if (part.includes("-")) {
         const [lo, hi] = part.split("-").map(Number);
-        if (value >= lo && value <= hi) return true;
+        if (value >= lo! && value <= hi!) return true;
       } else {
         if (value === parseInt(part)) return true;
       }
@@ -155,7 +145,7 @@ export function parseCron(expression: string): { next: () => Date } {
       candidate.setSeconds(0, 0);
       candidate.setMinutes(candidate.getMinutes() + 1);
 
-      for (let i = 0; i < 525600; i++) { // max 1 year search
+      for (let i = 0; i < 525600; i++) {
         const min = candidate.getMinutes();
         const hour = candidate.getHours();
         const dom = candidate.getDate();
