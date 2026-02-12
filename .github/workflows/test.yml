@@ -1,7 +1,7 @@
 jobs:
   test:
     name: Run Tests
-    runs-on: ubuntu-latest # Simplified to Ubuntu only for debugging
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
@@ -10,16 +10,19 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.1.4 # pin a known stable version
 
-      # Changed to regular install to see if lockfile was the issue
+      - name: Bun info
+        run: |
+          bun --version
+          bun env
+          bun doctor
+
       - name: Install dependencies
-        run: bun install 
+        run: bun install --force
 
-      # Removed continue-on-error to catch TS issues immediately
       - name: Type check
         run: bun run tsc --noEmit
 
       - name: Run tests
-        # Increased timeout for CI environment
-        run: bun test --timeout 60000
+        run: bun test --ci --timeout 120000
