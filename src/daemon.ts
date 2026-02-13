@@ -51,6 +51,7 @@ const metricsInterval = setInterval(() => {
 }, 2000);
 
 async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
+    console.log("msg.type===>", msg)
   try {
     switch (msg.type) {
       case "start": {
@@ -183,51 +184,33 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
   }
 }
 
-// Unix socket server
+
 const server = Bun.serve({
-  unix: DAEMON_SOCKET,
-  fetch(req, server) {
-    if (server.upgrade(req)) return;
-    return new Response("bm2 daemon");
-  },
-  websocket: {
-    async message(ws: ServerWebSocket<unknown>, message) {
-      try {
-        const msg: DaemonMessage = JSON.parse(String(message));
-        const response = await handleMessage(msg);
-        ws.send(JSON.stringify(response));
-      } catch (err: any) {
-        ws.send(JSON.stringify({ type: "error", error: err.message, success: false }));
-      }
+    unix: DAEMON_SOCKET,
+    async fetch(req) {
+                 
+        if (req.method !== "POST") {
+            return Response.json(
+                { type: "error", error: "Method Not Allowed", success: false },
+                { status: 405 }
+            )
+        }
+
+        try {
+            
+            const msg: DaemonMessage = await req.json() as DaemonMessage;
+                                    
+            const response = await handleMessage(msg);
+            
+            return Response.json(response);
+            
+        } catch (err: any) {
+            return Response.json(
+                { type: "error", error: err.message, success: false },
+                { status: 500 }
+            );
+        }
     },
-    open(ws) {},
-    close(ws) {},
-  },
 });
 
-// Signal handlers
-const shutdown = async () => {
-  console.log("\n[bm2] Shutting down daemon...");
-  await pm.stopAll();
-  dashboard.stop();
-  clearInterval(metricsInterval);
-  try { unlinkSync(DAEMON_SOCKET); } catch {}
-  try { unlinkSync(DAEMON_PID_FILE); } catch {}
-  process.exit(0);
-};
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
-process.on("SIGHUP", shutdown);
-
-// Handle uncaught errors to keep daemon alive
-process.on("uncaughtException", (err) => {
-  console.error("[bm2] Uncaught exception:", err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("[bm2] Unhandled rejection:", err);
-});
-
-console.log(`[bm2] Daemon running (PID: ${process.pid})`);
-console.log(`[bm2] Socket: ${DAEMON_SOCKET}`);
+console.log(`Listening on ${server.url}`);

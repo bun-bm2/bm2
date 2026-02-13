@@ -57,49 +57,49 @@
    }
  
    async start(options: StartOptions): Promise<ProcessState[]> {
-     const resolvedInstances = this.clusterManager.resolveInstances(options.instances);
-     const isCluster = options.execMode === "cluster" || resolvedInstances > 1;
-     const states: ProcessState[] = [];
+               
+        const resolvedInstances = this.clusterManager.resolveInstances(options.instances);
+        const isCluster = options.execMode === "cluster" || resolvedInstances > 1;
+        const states: ProcessState[] = [];
  
-     if (isCluster) {
-       // In cluster mode, each instance is a separate container
-       for (let i = 0; i < resolvedInstances; i++) {
-         const id = this.nextId++;
-         const baseName =
-           options.name ||
-           options.script.split("/").pop()?.replace(/\.\w+$/, "") ||
-           `app-${id}`;
-         const name = resolvedInstances > 1 ? `${baseName}-${i}` : baseName;
- 
-         const config = this.buildConfig(id, name, options, resolvedInstances, i);
-         const container = new ProcessContainer(
-           id, config, this.logManager, this.clusterManager,
-           this.healthChecker, this.cronManager
-         );
- 
-         this.processes.set(id, container);
-         await container.start();
-         states.push(container.getState());
-       }
-     } else {
-       const id = this.nextId++;
-       const name =
-         options.name ||
-         options.script.split("/").pop()?.replace(/\.\w+$/, "") ||
-         `app-${id}`;
- 
-       const config = this.buildConfig(id, name, options, 1, 0);
-       const container = new ProcessContainer(
-         id, config, this.logManager, this.clusterManager,
-         this.healthChecker, this.cronManager
-       );
- 
-       this.processes.set(id, container);
-       await container.start();
-       states.push(container.getState());
-     }
- 
-     return states;
+        if (isCluster) {
+            // In cluster mode, each instance is a separate container
+            for (let i = 0; i < resolvedInstances; i++) {
+                
+                const id = this.nextId++;
+                const baseName = options.name || options.script.split("/").pop()?.replace(/\.\w+$/, "") || `app-${id}`;
+                const name = resolvedInstances > 1 ? `${baseName}-${i}` : baseName;
+        
+                const config = this.buildConfig(id, name, options, resolvedInstances, i);
+                
+                const container = new ProcessContainer(
+                    id, config, this.logManager, this.clusterManager,
+                    this.healthChecker, this.cronManager
+                );
+        
+                this.processes.set(id, container);
+                await container.start();
+                states.push(container.getState());
+            }
+        } else {
+            const id = this.nextId++;
+            const name =
+                options.name ||
+                options.script.split("/").pop()?.replace(/\.\w+$/, "") ||
+                `app-${id}`;
+        
+            const config = this.buildConfig(id, name, options, 1, 0);
+            const container = new ProcessContainer(
+                id, config, this.logManager, this.clusterManager,
+                this.healthChecker, this.cronManager
+            );
+        
+            this.processes.set(id, container);
+            await container.start();
+            states.push(container.getState());
+        }
+    
+        return states;
    }
  
    private buildConfig(
