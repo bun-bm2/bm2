@@ -396,7 +396,7 @@ export class ProcessContainer {
       if (!force) {
         const timeout = this.config.killTimeout || 5000;
         const exited = await Promise.race([
-          this.process.exited.then(() => true),
+          this?.process?.exited.then(() => true),
           new Promise<boolean>((r) => setTimeout(() => r(false), timeout)),
         ]);
 
@@ -406,7 +406,7 @@ export class ProcessContainer {
           } else {
             this.process.kill("SIGKILL" as any);
           }
-          await this.process.exited;
+          await this?.process?.exited;
         }
       } else {
         if (this.config.treekill !== false && this.pid) {
@@ -414,7 +414,7 @@ export class ProcessContainer {
         } else {
           this.process.kill("SIGKILL" as any);
         }
-        await this.process.exited;
+        await this?.process?.exited;
       }
     }
 

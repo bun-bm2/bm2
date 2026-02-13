@@ -95,176 +95,37 @@ async function startDaemon(): Promise<void> {
 
 async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
     
-    await startDaemon();
+    //await startDaemon();
     
     let res;
     
     try {
-        
-        res = await fetch("http://localhost/command", {
-            unix: DAEMON_SOCKET,
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(msg),
-        });
-        
-        if (!res.ok) {
-            throw new Error(`Daemon error: ${res.status}`);
-        }
-        
-        const resJson: DaemonResponse = await res.json() as DaemonResponse;
-        
-        return resJson;
+      
+      res = await fetch("http://localhost/command", {
+        unix: DAEMON_SOCKET,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(msg),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`Daemon error: ${res.status}`);
+      }
+      
+      const resJson: DaemonResponse = await res.json() as DaemonResponse;
+      
+      return resJson;
+      
     } catch (e: any) {
-        console.log("Results returned: " + await res?.text())
-        console.log()
-        console.log("sendToDaemon#Error:", e, e.stack)
-        return { type: "error", error: "Fetch Error", success: false }
+      console.log("Results returned: " + await res?.text())
+      console.log()
+      console.log("sendToDaemon#Error:", e, e.stack)
+      return { type: "error", error: "Fetch Error", success: false }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Table rendering
-// ---------------------------------------------------------------------------
-
-
-function printToCli(data: any) {
-  console.log()
-  console.log()
-  
-  console.log(data)
-  
-  console.log()
-  console.log()
-}
-
-/* 
-function printProcessTable(processes: ProcessState[]) {
-  
-  console.log()
-  console.log()
-  
-  if (!processes || processes.length === 0) {
-    console.log(colorize("No processes running", "dim"));
-    console.log()
-    console.log()
-    return;
-  }
-
-  const header = [
-    padRight("id", 4),
-    padRight("name", 20),
-    padRight("namespace", 12),
-    padRight("version", 10),
-    padRight("mode", 8),
-    padRight("pid", 8),
-    padRight("uptime", 10),
-    padRight("↺", 4),
-    padRight("status", 16),
-    padRight("cpu", 8),
-    padRight("mem", 10),
-  ].join(" ");
-
-  console.log(colorize("─".repeat(header.length), "dim"));
-  console.log(colorize(header, "dim"));
-  console.log(colorize("─".repeat(header.length), "dim"));
-
-  for (const p of processes) {
-    const uptime =
-      p.status === "online" ? formatUptime(Date.now() - p.bm2_env.pm_uptime) : "0s";
-
-    const row = [
-      padRight(String(p.pm_id), 4),
-      padRight(p.name, 20),
-      padRight(p.namespace || "default", 12),
-      padRight(p.bm2_env.version || "N/A", 10),
-      padRight(p.bm2_env.execMode, 8),
-      padRight(p.pid ? String(p.pid) : "N/A", 8),
-      padRight(uptime, 10),
-      padRight(String(p.bm2_env.restart_time), 4),
-      padRight(p.status, 16),
-      padRight(p.monit.cpu.toFixed(1) + "%", 8),
-      padRight(formatBytes(p.monit.memory), 10),
-    ];
-
-    const line = row.join(" ");
-    // Colorize the status cell inline
-    const colored = line.replace(
-      p.status,
-      colorize(p.status, statusColor(p.status))
-    );
-    console.log(colored);
-  }
-  
-  console.log(colorize("─".repeat(header.length), "dim"));
-
-  console.log()
-  console.log()
-}
-
-
-
-function printProcessTable(processes: ProcessState[]) {
-  console.log("\n");
-
-  if (!processes || processes.length === 0) {
-    console.log(colorize("No processes running", "dim"));
-    console.log("\n");
-    return;
-  }
-
-  const table = new Table({
-    head: [
-      "id",
-      "name",
-      "namespace",
-      "version",
-      "mode",
-      "pid",
-      "uptime",
-      "↺",
-      "status",
-      "cpu",
-      "mem",
-    ],
-    colWidths: [4, 20, 12, 10, 8, 8, 10, 4, 16, 8, 10],
-    style: {
-      head: ["dim"],   // header color
-      border: ["dim"], // border color
-    },
-    wordWrap: false,
-  });
-
-  for (const p of processes) {
-    
-    console.log("p=====>", p)
-    
-    const uptime =
-      p.status === "online"
-        ? formatUptime(Date.now() - p.bm2_env.pm_uptime)
-        : "0s";
-
-    table.push([
-      p.pm_id,
-      p.name,
-      p.namespace || "default",
-      p.bm2_env?.version || "N/A",
-      p.bm2_env?.execMode,
-      p.pid ?? "N/A",
-      uptime,
-      p.bm2_env.restart_time,
-      colorize(p.status, statusColor(p.status)),
-      p.monit.cpu.toFixed(1) + "%",
-      formatBytes(p.monit.memory),
-    ]);
-  }
-
-  console.log(table.toString());
-  console.log("\n");
-}
-*/
 
 // ---------------------------------------------------------------------------
 // Ecosystem config loader
@@ -444,7 +305,9 @@ function parseStartFlags(args: string[], scriptOrConfig: string): StartOptions {
 // ---------------------------------------------------------------------------
 
 async function cmdStart(args: string[]) {
+  
   const scriptOrConfig = args[0];
+  
   if (!scriptOrConfig) {
     console.error(colorize("Usage: bm2 start <script|config> [options]", "red"));
     process.exit(1);
@@ -527,8 +390,9 @@ async function cmdDelete(args: string[]) {
   const res = await sendToDaemon({ type, data });
   if (!res.success) {
     console.error(colorize(`Error: ${res.error}`, "red"));
-    process.exit(1);
+    process?.exit(1);
   }
+  
   console.log(colorize("✓ Deleted", "green"));
   printProcessTable(res.data);
 }
