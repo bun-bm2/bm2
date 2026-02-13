@@ -16,9 +16,11 @@
  
 import { homedir } from "os";
 import { join } from "path";
+import packageJson from '../package.json' assert { type: 'json' };
 
-export const APP_NAME = "bm2";
-export const VERSION = "1.0.0";
+
+export const APP_NAME = packageJson.name;
+export const VERSION = packageJson.version;
 
 export const BM2_HOME = join(homedir(), ".bm2");
 export const DAEMON_SOCKET = join(BM2_HOME, "daemon.sock");
