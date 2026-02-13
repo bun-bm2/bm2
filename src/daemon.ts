@@ -26,9 +26,11 @@ import {
 import { ensureDirs } from "./utils";
 import { unlinkSync, existsSync } from "fs";
 import type { DaemonMessage, DaemonResponse } from "./types";
+import type { BunRequest, Server } from "bun";
 
 ensureDirs();
 
+let server: Server<any> | null = null
 const pm = new ProcessManager();
 const dashboard = new Dashboard(pm);
 const moduleManager = new ModuleManager(pm);
@@ -48,6 +50,37 @@ await moduleManager.loadAll();
 const metricsInterval = setInterval(() => {
   pm.getMetrics();
 }, 2000);
+
+
+const handleServerRequests = async (req: Request) => {
+             
+  if (req.method !== "POST") {
+    return Response.json(
+      { type: "error", error: "Method Not Allowed", success: false },
+      { status: 405 }
+    )
+  }
+
+  try {
+        
+    const msg: DaemonMessage = await req.json() as DaemonMessage;
+                                
+    const response = await handleMessage(msg);
+        
+    return Response.json(response);
+        
+  } catch (err: any) {
+    return Response.json(
+      { type: "error", error: err.message, success: false },
+      { status: 500 }
+    );
+  }
+};
+
+const serverOptions = {
+    unix: DAEMON_SOCKET,
+    fetch: handleServerRequests
+}
 
 async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
   try {
@@ -156,9 +189,20 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
         await moduleManager.uninstall(msg.data.module);
         return { type: "moduleUninstall", success: true, id: msg.id };
       }
+        
       case "moduleList": {
         return { type: "moduleList", data: moduleManager.list(), success: true, id: msg.id };
       }
+        
+      case "daemonStop": {
+        server?.stop();
+        return { type: "daemonStop", success: true, id: msg.id };
+      }
+        
+      case "daemonReload": {
+        return { type: "daemonReload", success: true, id: msg.id };
+      }
+      
       case "ping": {
         return {
           type: "pong",
@@ -167,6 +211,7 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
           id: msg.id,
         };
       }
+        
       case "kill": {
         await pm.stopAll();
         dashboard.stop();
@@ -183,32 +228,6 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
 }
 
 
-const server = Bun.serve({
-    unix: DAEMON_SOCKET,
-    async fetch(req) {
-                 
-        if (req.method !== "POST") {
-            return Response.json(
-                { type: "error", error: "Method Not Allowed", success: false },
-                { status: 405 }
-            )
-        }
-
-        try {
-            
-            const msg: DaemonMessage = await req.json() as DaemonMessage;
-                                    
-            const response = await handleMessage(msg);
-            
-            return Response.json(response);
-            
-        } catch (err: any) {
-            return Response.json(
-                { type: "error", error: err.message, success: false },
-                { status: 500 }
-            );
-        }
-    },
-});
+server = Bun.serve(serverOptions);
 
 console.log(`Listening on ${server.url}`);
