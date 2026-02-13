@@ -26,6 +26,7 @@ import {
   DASHBOARD_PORT,
   METRICS_PORT,
   DAEMON_OUT_LOG_FILE,
+  DAEMON_ERR_LOG_FILE,
 } from "./constants";
 import { ensureDirs, formatBytes, formatUptime, colorize, padRight } from "./utils";
 import { DeployManager } from "./deploy";
@@ -64,10 +65,16 @@ async function startDaemon(): Promise<void> {
 
   const daemonScript = join(import.meta.dir, "daemon.ts");
   const bunPath = Bun.which("bun") || "bun";
-
+  
+  const stdout = Bun.file(DAEMON_OUT_LOG_FILE);
+  const stderr = Bun.file(DAEMON_ERR_LOG_FILE);
+  
+  if(!(await stdout.exists())) await Bun.write(stdout, "");
+  if(!(await stderr.exists())) await Bun.write(stderr, "");
+    
   const child = Bun.spawn([bunPath, "run", daemonScript], {
-    stdout: Bun.file(DAEMON_OUT_LOG_FILE),
-    stderr: Bun.file(DAEMON_OUT_LOG_FILE),
+    stdout,
+    stderr,
     stdin:  "ignore",
   });
 
