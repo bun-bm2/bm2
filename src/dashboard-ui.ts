@@ -195,8 +195,8 @@
        <td>\${p.pid||'-'}</td>
        <td>\${p.monit.cpu.toFixed(1)}%</td>
        <td>\${formatBytes(p.monit.memory)}</td>
-       <td>\${p.pm2_env.restart_time}</td>
-       <td>\${p.status==='online' ? formatUptime(Date.now()-p.pm2_env.pm_uptime) : '-'}</td>
+       <td>\${p.bm2_env.restart_time}</td>
+       <td>\${p.status==='online' ? formatUptime(Date.now()-p.bm2_env.pm_uptime) : '-'}</td>
        <td class="actions">
          <button class="btn success" onclick="send('restart',{target:'\${p.pm_id}'})">↻</button>
          <button class="btn danger" onclick="send('stop',{target:'\${p.pm_id}'})">■</button>

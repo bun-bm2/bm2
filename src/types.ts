@@ -102,7 +102,7 @@ export interface ProcessState {
     handles?: number;
     eventLoopLatency?: number;
   };
-  pm2_env: ProcessDescription & {
+  bm2_env: ProcessDescription & {
     status: ProcessStatus;
     pm_uptime: number;
     restart_time: number;

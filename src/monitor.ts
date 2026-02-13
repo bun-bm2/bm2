@@ -95,8 +95,8 @@ export class Monitor {
         eventLoopLatency: p.monit.eventLoopLatency,
         handles: p.monit.handles,
         status: p.status,
-        restarts: p.pm2_env.restart_time,
-        uptime: p.pm2_env.status === "online" ? Date.now() - p.pm2_env.pm_uptime : 0,
+        restarts: p.bm2_env.restart_time,
+        uptime: p.bm2_env.status === "online" ? Date.now() - p.bm2_env.pm_uptime : 0,
       })),
       system: {
         totalMemory: system.totalMemory,
@@ -147,14 +147,14 @@ export class Monitor {
     lines.push("# HELP bm2_process_restarts_total Total restart count");
     lines.push("# TYPE bm2_process_restarts_total counter");
     for (const p of processes) {
-      lines.push(`bm2_process_restarts_total{name="${p.name}",id="${p.pm_id}"} ${p.pm2_env.restart_time}`);
+      lines.push(`bm2_process_restarts_total{name="${p.name}",id="${p.pm_id}"} ${p.bm2_env.restart_time}`);
     }
 
     lines.push("# HELP bm2_process_uptime_seconds Process uptime in seconds");
     lines.push("# TYPE bm2_process_uptime_seconds gauge");
     for (const p of processes) {
-      const uptime = p.pm2_env.status === "online"
-        ? (Date.now() - p.pm2_env.pm_uptime) / 1000
+      const uptime = p.bm2_env.status === "online"
+        ? (Date.now() - p.bm2_env.pm_uptime) / 1000
         : 0;
       lines.push(`bm2_process_uptime_seconds{name="${p.name}",id="${p.pm_id}"} ${uptime.toFixed(0)}`);
     }

@@ -484,7 +484,7 @@ export class ProcessContainer {
         handles: this.handles,
         eventLoopLatency: this.eventLoopLatency,
       },
-      pm2_env: {
+      bm2_env: {
         ...this.config,
         status: this.status,
         pm_uptime: this.startedAt,

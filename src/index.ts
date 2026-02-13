@@ -40,6 +40,8 @@ import type {
   ProcessState,
 } from "./types";
 import Table from "cli-table3";
+import { statusColor } from "./colors";
+import { liveWatchProcess, printProcessTable, watchProcesses } from "./process-table";
 
 // ---------------------------------------------------------------------------
 // Ensure directory structure exists
@@ -127,23 +129,6 @@ async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
 // Table rendering
 // ---------------------------------------------------------------------------
 
-function statusColor(status: string): string {
-  switch (status) {
-    case "online":
-      return "green";
-    case "stopped":
-      return "gray";
-    case "errored":
-      return "red";
-    case "launching":
-    case "waiting-restart":
-      return "yellow";
-    case "stopping":
-      return "magenta";
-    default:
-      return "white";
-  }
-}
 
 function printToCli(data: any) {
   console.log()
@@ -188,17 +173,17 @@ function printProcessTable(processes: ProcessState[]) {
 
   for (const p of processes) {
     const uptime =
-      p.status === "online" ? formatUptime(Date.now() - p.pm2_env.pm_uptime) : "0s";
+      p.status === "online" ? formatUptime(Date.now() - p.bm2_env.pm_uptime) : "0s";
 
     const row = [
       padRight(String(p.pm_id), 4),
       padRight(p.name, 20),
       padRight(p.namespace || "default", 12),
-      padRight(p.pm2_env.version || "N/A", 10),
-      padRight(p.pm2_env.execMode, 8),
+      padRight(p.bm2_env.version || "N/A", 10),
+      padRight(p.bm2_env.execMode, 8),
       padRight(p.pid ? String(p.pid) : "N/A", 8),
       padRight(uptime, 10),
-      padRight(String(p.pm2_env.restart_time), 4),
+      padRight(String(p.bm2_env.restart_time), 4),
       padRight(p.status, 16),
       padRight(p.monit.cpu.toFixed(1) + "%", 8),
       padRight(formatBytes(p.monit.memory), 10),
@@ -218,7 +203,7 @@ function printProcessTable(processes: ProcessState[]) {
   console.log()
   console.log()
 }
-*/
+
 
 
 function printProcessTable(processes: ProcessState[]) {
@@ -253,20 +238,23 @@ function printProcessTable(processes: ProcessState[]) {
   });
 
   for (const p of processes) {
+    
+    console.log("p=====>", p)
+    
     const uptime =
       p.status === "online"
-        ? formatUptime(Date.now() - p.pm2_env.pm_uptime)
+        ? formatUptime(Date.now() - p.bm2_env.pm_uptime)
         : "0s";
 
     table.push([
       p.pm_id,
       p.name,
       p.namespace || "default",
-      p.pm2_env.version || "N/A",
-      p.pm2_env.execMode,
+      p.bm2_env?.version || "N/A",
+      p.bm2_env?.execMode,
       p.pid ?? "N/A",
       uptime,
-      p.pm2_env.restart_time,
+      p.bm2_env.restart_time,
       colorize(p.status, statusColor(p.status)),
       p.monit.cpu.toFixed(1) + "%",
       formatBytes(p.monit.memory),
@@ -276,7 +264,7 @@ function printProcessTable(processes: ProcessState[]) {
   console.log(table.toString());
   console.log("\n");
 }
-
+*/
 
 // ---------------------------------------------------------------------------
 // Ecosystem config loader
@@ -545,13 +533,29 @@ async function cmdDelete(args: string[]) {
   printProcessTable(res.data);
 }
 
-async function cmdList() {
+async function cmdList(args: string[]) {
   const res = await sendToDaemon({ type: "list" });
   if (!res.success) {
     console.error(colorize(`Error: ${res.error}`, "red"));
     process.exit(1);
   }
-  printProcessTable(res.data);
+  
+  let liveMode = false;
+  
+  for (let arg of args) {
+    switch (arg) {
+      case "--live":
+        liveMode = true;
+        break;
+      default:
+    }
+  }
+  
+  if (liveMode) {
+    liveWatchProcess(res.data)
+  } else {
+    printProcessTable(res.data);
+  }
 }
 
 async function cmdDescribe(args: string[]) {
@@ -572,37 +576,37 @@ async function cmdDescribe(args: string[]) {
     console.log(colorize(`\n─── ${p.name} (id: ${p.pm_id}) ───`, "bold"));
     console.log(`  Status       : ${colorize(p.status, statusColor(p.status))}`);
     console.log(`  PID          : ${p.pid || "N/A"}`);
-    console.log(`  Exec mode    : ${p.pm2_env.execMode}`);
-    console.log(`  Instances    : ${p.pm2_env.instances}`);
+    console.log(`  Exec mode    : ${p.bm2_env.execMode}`);
+    console.log(`  Instances    : ${p.bm2_env.instances}`);
     console.log(`  Namespace    : ${p.namespace || "default"}`);
-    console.log(`  Script       : ${p.pm2_env.script}`);
-    console.log(`  CWD          : ${p.pm2_env.cwd}`);
-    console.log(`  Args         : ${p.pm2_env.args.join(" ") || "(none)"}`);
-    console.log(`  Interpreter  : ${p.pm2_env.interpreter || "bun"}`);
-    console.log(`  Restarts     : ${p.pm2_env.restart_time}`);
-    console.log(`  Unstable     : ${p.pm2_env.unstable_restarts}`);
+    console.log(`  Script       : ${p.bm2_env.script}`);
+    console.log(`  CWD          : ${p.bm2_env.cwd}`);
+    console.log(`  Args         : ${p.bm2_env.args.join(" ") || "(none)"}`);
+    console.log(`  Interpreter  : ${p.bm2_env.interpreter || "bun"}`);
+    console.log(`  Restarts     : ${p.bm2_env.restart_time}`);
+    console.log(`  Unstable     : ${p.bm2_env.unstable_restarts}`);
     console.log(
       `  Uptime       : ${
-        p.status === "online" ? formatUptime(Date.now() - p.pm2_env.pm_uptime) : "N/A"
+        p.status === "online" ? formatUptime(Date.now() - p.bm2_env.pm_uptime) : "N/A"
       }`
     );
-    console.log(`  Created at   : ${new Date(p.pm2_env.created_at).toISOString()}`);
+    console.log(`  Created at   : ${new Date(p.bm2_env.created_at).toISOString()}`);
     console.log(`  CPU          : ${p.monit.cpu.toFixed(1)}%`);
     console.log(`  Memory       : ${formatBytes(p.monit.memory)}`);
     if (p.monit.handles !== undefined)
       console.log(`  Handles      : ${p.monit.handles}`);
     if (p.monit.eventLoopLatency !== undefined)
       console.log(`  EL Latency   : ${p.monit.eventLoopLatency.toFixed(2)} ms`);
-    console.log(`  Watch        : ${p.pm2_env.watch}`);
-    console.log(`  Autorestart  : ${p.pm2_env.autorestart}`);
-    console.log(`  Max restarts : ${p.pm2_env.maxRestarts}`);
-    console.log(`  Kill timeout : ${p.pm2_env.killTimeout} ms`);
-    if (p.pm2_env.healthCheckUrl)
-      console.log(`  Health URL   : ${p.pm2_env.healthCheckUrl}`);
-    if (p.pm2_env.cronRestart)
-      console.log(`  Cron restart : ${p.pm2_env.cronRestart}`);
-    if (p.pm2_env.port)
-      console.log(`  Port         : ${p.pm2_env.port}`);
+    console.log(`  Watch        : ${p.bm2_env.watch}`);
+    console.log(`  Autorestart  : ${p.bm2_env.autorestart}`);
+    console.log(`  Max restarts : ${p.bm2_env.maxRestarts}`);
+    console.log(`  Kill timeout : ${p.bm2_env.killTimeout} ms`);
+    if (p.bm2_env.healthCheckUrl)
+      console.log(`  Health URL   : ${p.bm2_env.healthCheckUrl}`);
+    if (p.bm2_env.cronRestart)
+      console.log(`  Cron restart : ${p.bm2_env.cronRestart}`);
+    if (p.bm2_env.port)
+      console.log(`  Port         : ${p.bm2_env.port}`);
     console.log();
   }
 }
@@ -990,7 +994,7 @@ async function cmdPrometheus() {
 
 function printHelp() {
     console.log(`
-    ${colorize("⚡ BM2", "bold")} ${colorize(`v${VERSION}`, "dim")} — Bun Process Manager
+    ${colorize("BM2", "bold")} ${colorize(`v${VERSION}`, "dim")} — Bun Process Manager
     
     ${colorize("Usage:", "bold")} bm2 <command> [options]
     
@@ -1110,7 +1114,7 @@ function printHelp() {
     case "list":
     case "ls":
     case "status":
-        await cmdList();
+        await cmdList(commandArgs);
         break;
     case "describe":
     case "show":

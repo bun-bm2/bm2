@@ -369,11 +369,39 @@ Output:
 
 #### bm2 list
 
-List all managed processes with their status, resource usage, and uptime.
+List all managed processes with their status, resource usage, and uptime.  
+Supports a **live mode** with auto-refresh and interactive keyboard shortcuts.
 
-```
+```bash
 bm2 list
 ```
+
+## Live Mode Keyboard Shortcuts
+
+```
+R : Reload table manually
+M : Sort by Memory usage
+C : Sort by CPU usage
+U : Sort by Uptime
+Q : Quit live mode
+```
+
+## Examples
+
+```bash
+# List all processes once
+bm2 list
+
+# List processes with live updates
+bm2 list --live
+
+```
+
+## Notes
+
+* Live mode automatically refreshes the table every second (default interval).
+* Sorting can be changed on the fly using the keyboard shortcuts.
+* Press `R` to reload manually, `Q` to quit live mode.
 
 ---
 
