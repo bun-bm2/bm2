@@ -319,7 +319,8 @@ async function cmdStart(args: string[]) {
   if (
     ext === ".json" ||
     scriptOrConfig.includes("ecosystem") ||
-    scriptOrConfig.includes("bm2.config")
+    scriptOrConfig.includes("bm2.config") || 
+    scriptOrConfig.includes("pm2.config")
   ) {
     const config = await loadEcosystemConfig(scriptOrConfig);
     const res = await sendToDaemon({ type: "ecosystem", data: config });
