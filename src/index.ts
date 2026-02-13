@@ -86,23 +86,32 @@ async function startDaemon(): Promise<void> {
 async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
     
     await startDaemon();
-  
-    const res = await fetch("http://localhost/command", {
-        unix: DAEMON_SOCKET,
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(msg),
-    });
     
-    if (!res.ok) {
-        throw new Error(`Daemon error: ${res.status}`);
+    let res;
+    
+    try {
+        
+        res = await fetch("http://localhost/command", {
+            unix: DAEMON_SOCKET,
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(msg),
+        });
+        
+        if (!res.ok) {
+            throw new Error(`Daemon error: ${res.status}`);
+        }
+        
+        const resJson: DaemonResponse = await res.json() as DaemonResponse;
+        
+        return resJson;
+    } catch (e: any) {
+        console.log("Results returned "+res?.text())
+        console.log("sendToDaemon#Error:", e, e.stack)
+        return { type: "error", error: "Fetch Error", success: false }
     }
-    
-    const resJson: DaemonResponse = await res.json() as DaemonResponse;
-    
-    return resJson;
 }
 
 // ---------------------------------------------------------------------------

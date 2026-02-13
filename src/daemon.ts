@@ -26,7 +26,6 @@ import {
 import { ensureDirs } from "./utils";
 import { unlinkSync, existsSync } from "fs";
 import type { DaemonMessage, DaemonResponse } from "./types";
-import type { ServerWebSocket } from "bun";
 
 ensureDirs();
 
