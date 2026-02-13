@@ -5,8 +5,7 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 
 ![Runtime](https://img.shields.io/badge/runtime-Bun-f472b6?style=flat-square)
 ![Language](https://img.shields.io/badge/language-TypeScript-3178c6?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)
+![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)
 [![Tests](https://github.com/bun-bm2/bm2/actions/workflows/test.yml/badge.svg)](https://github.com/bun-bm2/bm2/actions/workflows/test.yml)
 
 **Created by the MaxxPainn Team**
