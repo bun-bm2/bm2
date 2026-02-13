@@ -95,35 +95,39 @@ async function startDaemon(): Promise<void> {
 
 async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
     
-    //await startDaemon();
+  //start the daemon
+  await startDaemon();
     
-    let res;
+  let res;
     
-    try {
+  try {
       
-      res = await fetch("http://localhost/command", {
-        unix: DAEMON_SOCKET,
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(msg),
-      });
-      
-      if (!res.ok) {
-        throw new Error(`Daemon error: ${res.status}`);
-      }
-      
-      const resJson: DaemonResponse = await res.json() as DaemonResponse;
-      
-      return resJson;
-      
-    } catch (e: any) {
-      console.log("Results returned: " + await res?.text())
-      console.log()
-      console.log("sendToDaemon#Error:", e, e.stack)
-      return { type: "error", error: "Fetch Error", success: false }
+    const uri = `http://localhost/command`
+    
+    res = await fetch(uri, {
+      unix: DAEMON_SOCKET,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(msg),
+    });
+    
+    if (!res.ok) {
+      throw new Error(`Daemon error: ${res.status}`);
     }
+    
+    const resJson: DaemonResponse = await res.json() as DaemonResponse;
+    
+    return resJson;
+      
+  } catch (e: any) {
+    console.log("Results returned: " + await res?.text())
+    console.log()
+    console.log("sendToDaemon#Error:", e, e.stack)
+    return { type: "error", error: "Fetch Error", success: false }
+  }
+  
 }
 
 

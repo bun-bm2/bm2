@@ -78,8 +78,8 @@ const handleServerRequests = async (req: Request) => {
 };
 
 const serverOptions = {
-    unix: DAEMON_SOCKET,
-    fetch: handleServerRequests
+  unix: DAEMON_SOCKET,
+  fetch: handleServerRequests
 }
 
 async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
