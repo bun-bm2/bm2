@@ -51,7 +51,6 @@ const metricsInterval = setInterval(() => {
 }, 2000);
 
 async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
-    console.log("msg.type===>", msg)
   try {
     switch (msg.type) {
       case "start": {
