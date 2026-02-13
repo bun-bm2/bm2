@@ -158,6 +158,12 @@ bm2 start app.ts --name my-api --instances 4 --port 3000
 bm2 list
 ```
 
+### List processes with live updates
+
+```
+bm2 list --live
+```
+
 Output:
 
 ```
