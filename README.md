@@ -11,7 +11,7 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 
 **Created by the MaxxPainn Team**
 🌐 [https://maxxpainn.com](https://maxxpainn.com)
-📧 Support: [hello@maxxpainn.com](mailto:hello@maxxpainn.com)
+📧 Support: [zak@maxxpainn.com](mailto:zak@maxxpainn.com)
 
 ---
 
@@ -1575,7 +1575,7 @@ bun test
 
 ## License
 
-MIT License
+GPL-3.0-only
 
 Copyright (c) 2025 MaxxPainn Team
 
@@ -1588,4 +1588,4 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ---
 
 **Built with ❤️ by the [MaxxPainn Team](https://maxxpainn.com)**
-📧 Support: [hello@maxxpainn.com](mailto:hello@maxxpainn.com)
+📧 Support: [zak@maxxpainn.com](mailto:zak@maxxpainn.com)
