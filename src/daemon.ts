@@ -194,26 +194,14 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
         return { type: "moduleList", data: moduleManager.list(), success: true, id: msg.id };
       }
         
-      case "daemonStart": {
-        let status = (server) ? "Active": "Stopped"
-        return { type: "daemonStart", success: true, data: { status }, id: msg.id };
-      }
-        
-      case "daemonStart": {
+      case "daemonReload": {
         if (!server) {
           server = Bun.serve(serverOptions);
-          console.log(`Listening on ${server.url}`);
+        } else {
+          server.reload(serverOptions)
         }
-        return { type: "daemonStart", success: true, id: msg.id };
-      }
         
-      case "daemonStop": {
-        server?.stop();
-        return { type: "daemonStop", success: true, id: msg.id };
-      }
-        
-      case "daemonReload": {
-        return { type: "daemonReload", success: true, id: msg.id };
+        return { type: "daemonReload", data: `Daemon reloaded`, success: true, id: msg.id };
       }
       
       case "ping": {

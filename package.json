@@ -60,6 +60,7 @@
     "darwin"
   ],
   "dependencies": {
+    "cli-table3": "^0.6.5",
     "ws": "^8.19.0"
   },
   "devDependencies": {

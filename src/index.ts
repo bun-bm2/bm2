@@ -39,6 +39,7 @@ import type {
   EcosystemConfig,
   ProcessState,
 } from "./types";
+import Table from "cli-table3";
 
 // ---------------------------------------------------------------------------
 // Ensure directory structure exists
@@ -144,9 +145,26 @@ function statusColor(status: string): string {
   }
 }
 
+function printToCli(data: any) {
+  console.log()
+  console.log()
+  
+  console.log(data)
+  
+  console.log()
+  console.log()
+}
+
+/* 
 function printProcessTable(processes: ProcessState[]) {
+  
+  console.log()
+  console.log()
+  
   if (!processes || processes.length === 0) {
     console.log(colorize("No processes running", "dim"));
+    console.log()
+    console.log()
     return;
   }
 
@@ -164,6 +182,7 @@ function printProcessTable(processes: ProcessState[]) {
     padRight("mem", 10),
   ].join(" ");
 
+  console.log(colorize("─".repeat(header.length), "dim"));
   console.log(colorize(header, "dim"));
   console.log(colorize("─".repeat(header.length), "dim"));
 
@@ -193,7 +212,71 @@ function printProcessTable(processes: ProcessState[]) {
     );
     console.log(colored);
   }
+  
+  console.log(colorize("─".repeat(header.length), "dim"));
+
+  console.log()
+  console.log()
 }
+*/
+
+
+function printProcessTable(processes: ProcessState[]) {
+  console.log("\n");
+
+  if (!processes || processes.length === 0) {
+    console.log(colorize("No processes running", "dim"));
+    console.log("\n");
+    return;
+  }
+
+  const table = new Table({
+    head: [
+      "id",
+      "name",
+      "namespace",
+      "version",
+      "mode",
+      "pid",
+      "uptime",
+      "↺",
+      "status",
+      "cpu",
+      "mem",
+    ],
+    colWidths: [4, 20, 12, 10, 8, 8, 10, 4, 16, 8, 10],
+    style: {
+      head: ["dim"],   // header color
+      border: ["dim"], // border color
+    },
+    wordWrap: false,
+  });
+
+  for (const p of processes) {
+    const uptime =
+      p.status === "online"
+        ? formatUptime(Date.now() - p.pm2_env.pm_uptime)
+        : "0s";
+
+    table.push([
+      p.pm_id,
+      p.name,
+      p.namespace || "default",
+      p.pm2_env.version || "N/A",
+      p.pm2_env.execMode,
+      p.pid ?? "N/A",
+      uptime,
+      p.pm2_env.restart_time,
+      colorize(p.status, statusColor(p.status)),
+      p.monit.cpu.toFixed(1) + "%",
+      formatBytes(p.monit.memory),
+    ]);
+  }
+
+  console.log(table.toString());
+  console.log("\n");
+}
+
 
 // ---------------------------------------------------------------------------
 // Ecosystem config loader
@@ -866,6 +949,32 @@ async function cmdModule(args: string[]) {
   }
 }
 
+async function cmdDaemon(args: string[]) {
+  const subCmd = args[0];
+  let type;
+  
+  switch (subCmd) {
+    case "reload":
+      type = "daemonReload"
+      break;
+    default:
+      console.error(colorize("Usage: bm2 daemon <reload>", "red"));
+      process.exit(1);
+  }
+  
+  const res = await sendToDaemon({ type });
+    
+  if (res?.error) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  
+  console.log(colorize(res.data, "green"));
+  
+  process.exit(1);
+  
+}
+
 async function cmdPrometheus() {
   const res = await sendToDaemon({ type: "prometheus" });
   if (!res.success) {
@@ -924,6 +1033,12 @@ function printHelp() {
     module install <name|url>     Install a BM2 module
     module uninstall <name>       Remove a module
     module list                   List installed modules
+    
+    ${colorize("Daemon:", "cyan")}
+    daemon status                 Returns the status of the daemon
+    daemon start                  Starts the daemon
+    daemon start                  Stops the daemon
+    daemon reload                 Reloads the daemon
     
     ${colorize("Daemon:", "cyan")}
     ping                          Check if daemon is alive
@@ -1055,6 +1170,9 @@ function printHelp() {
         break;
     case "module":
         await cmdModule(commandArgs);
+        break;
+    case "daemon":
+        await cmdDaemon(commandArgs);
         break;
     case "version":
     case "-v":
