@@ -108,7 +108,8 @@ async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
         
         return resJson;
     } catch (e: any) {
-        console.log("Results returned "+res?.text())
+        console.log("Results returned: " + await res?.text())
+        console.log()
         console.log("sendToDaemon#Error:", e, e.stack)
         return { type: "error", error: "Fetch Error", success: false }
     }
