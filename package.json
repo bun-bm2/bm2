@@ -1,10 +1,14 @@
 {
   "name": "bm2",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "A blazing-fast, full-featured process manager built entirely on Bun native APIs. The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.",
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "src/api.ts",
+  "module": "src/api.ts",
+  "types": "src/api.ts",
+  "exports": {
+    ".": "./src/api.ts",
+    "./cli": "./src/index.ts"
+  },
   "bin": {
     "bm2": "./src/index.ts"
   },

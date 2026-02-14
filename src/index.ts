@@ -39,7 +39,6 @@ import type {
   EcosystemConfig,
   ProcessState,
 } from "./types";
-import Table from "cli-table3";
 import { statusColor } from "./colors";
 import { liveWatchProcess, printProcessTable } from "./process-table";
 

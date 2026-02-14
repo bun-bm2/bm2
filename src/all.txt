@@ -1,0 +1,4616 @@
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ import type { Subprocess } from "bun";
+ import type { ProcessDescription } from "./types";
+ import { getCpuCount } from "./utils";
+ 
+ export class ClusterManager {
+   private workers: Map<number, Map<number, Subprocess>> = new Map();
+ 
+   resolveInstances(instances: number | string | undefined): number {
+     if (instances === undefined || instances === 0) return 1;
+     if (typeof instances === "string") {
+       if (instances === "max" || instances === "-1") return getCpuCount();
+       return parseInt(instances) || 1;
+     }
+     if (instances === -1) return getCpuCount();
+     return instances;
+   }
+ 
+   createWorkerEnv(
+     baseEnv: Record<string, string>,
+     workerId: number,
+     totalWorkers: number,
+     basePort?: number
+   ): Record<string, string> {
+     return {
+       ...baseEnv,
+       BM2_CLUSTER: "true",
+       BM2_WORKER_ID: String(workerId),
+       BM2_INSTANCES: String(totalWorkers),
+       NODE_APP_INSTANCE: String(workerId),
+       ...(basePort ? { PORT: String(basePort + workerId) } : {}),
+     };
+   }
+ 
+   buildWorkerCommand(config: ProcessDescription): string[] {
+     const cmd: string[] = [];
+ 
+     if (config.interpreter) {
+       cmd.push(config.interpreter);
+       if (config.interpreterArgs) cmd.push(...config.interpreterArgs);
+     } else {
+       const ext = config.script.split(".").pop()?.toLowerCase();
+       if (ext === "ts" || ext === "tsx" || ext === "js" || ext === "jsx" || ext === "mjs") {
+         cmd.push("bun", "run");
+       } else if (ext === "py") {
+         cmd.push("python3");
+       } else {
+         cmd.push("bun", "run");
+       }
+     }
+ 
+     if (config.nodeArgs?.length) {
+       cmd.push(...config.nodeArgs);
+     }
+ 
+     cmd.push(config.script);
+     if (config.args?.length) cmd.push(...config.args);
+ 
+     return cmd;
+   }
+ 
+   spawnWorker(
+     config: ProcessDescription,
+     workerId: number,
+     totalWorkers: number,
+     logStreams: { stdout: "pipe" | "inherit"; stderr: "pipe" | "inherit" }
+   ): Subprocess {
+     const cmd = this.buildWorkerCommand(config);
+     const env = this.createWorkerEnv(
+       { ...process.env as Record<string, string>, ...config.env },
+       workerId,
+       totalWorkers,
+       config.port
+     );
+ 
+     const proc = Bun.spawn(cmd, {
+       cwd: config.cwd || process.cwd(),
+       env,
+       stdout: logStreams.stdout,
+       stderr: logStreams.stderr,
+       stdin: "ignore",
+     });
+ 
+     if (!this.workers.has(config.id)) {
+       this.workers.set(config.id, new Map());
+     }
+     this.workers.get(config.id)!.set(workerId, proc);
+ 
+     return proc;
+   }
+ 
+   getWorkers(processId: number): Map<number, Subprocess> | undefined {
+     return this.workers.get(processId);
+   }
+ 
+   removeWorker(processId: number, workerId: number) {
+     this.workers.get(processId)?.delete(workerId);
+   }
+ 
+   removeAllWorkers(processId: number) {
+     this.workers.delete(processId);
+   }
+ }
+
+export function color(text: string, type: string) {
+  const codes: Record<string, string> = {
+    reset: "\x1b[0m",
+    bold: "\x1b[1m",
+    dim: "\x1b[2m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    cyan: "\x1b[36m",
+    magenta: "\x1b[35m",
+  };
+  return (codes[type] || "") + text + codes.reset;
+}
+
+export function statusColor(status: string): string {
+  switch (status) {
+    case "online":
+      return "green";
+    case "stopped":
+      return "gray";
+    case "errored":
+      return "red";
+    case "launching":
+    case "waiting-restart":
+      return "yellow";
+    case "stopping":
+      return "magenta";
+    default:
+      return "white";
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+import { homedir } from "os";
+import { join } from "path";
+import packageJson from '../package.json' assert { type: 'json' };
+
+
+export const APP_NAME = packageJson.name;
+export const VERSION = packageJson.version;
+
+export const BM2_HOME = join(homedir(), ".bm2");
+export const DAEMON_SOCKET = join(BM2_HOME, "daemon.sock");
+export const DAEMON_PID_FILE = join(BM2_HOME, "daemon.pid");
+export const DAEMON_OUT_LOG_FILE = join(BM2_HOME, "daemon.out.log");
+export const DAEMON_ERR_LOG_FILE = join(BM2_HOME, "daemon.err.log");
+export const LOG_DIR = join(BM2_HOME, "logs");
+export const PID_DIR = join(BM2_HOME, "pids");
+export const DUMP_FILE = join(BM2_HOME, "dump.json");
+export const METRICS_DIR = join(BM2_HOME, "metrics");
+export const MODULE_DIR = join(BM2_HOME, "modules");
+export const CONFIG_FILE = join(BM2_HOME, "config.json");
+export const DASHBOARD_PORT = 9615;
+export const METRICS_PORT = 9616;
+
+export const ALL_DIRS = [BM2_HOME, LOG_DIR, PID_DIR, METRICS_DIR, MODULE_DIR];
+
+export const DEFAULT_KILL_TIMEOUT = 5000;
+export const DEFAULT_MIN_UPTIME = 1000;
+export const DEFAULT_MAX_RESTARTS = 16;
+export const DEFAULT_RESTART_DELAY = 0;
+export const DEFAULT_LOG_MAX_SIZE = 10 * 1024 * 1024; // 10MB
+export const DEFAULT_LOG_RETAIN = 5;
+export const MONITOR_INTERVAL = 1000;
+export const HEALTH_CHECK_INTERVAL = 30000;
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+import { parseCron } from "./utils";
+
+export class CronManager {
+  private jobs: Map<number, {
+    expression: string;
+    timer: ReturnType<typeof setTimeout>;
+  }> = new Map();
+
+  schedule(processId: number, expression: string, callback: () => void) {
+    this.cancel(processId);
+
+    const scheduleNext = () => {
+      try {
+        const cron = parseCron(expression);
+        const nextDate = cron.next();
+        const delay = nextDate.getTime() - Date.now();
+
+        if (delay < 0) {
+          // Schedule for next minute at least
+          setTimeout(scheduleNext, 60000);
+          return;
+        }
+
+        const timer = setTimeout(() => {
+          callback();
+          scheduleNext(); // Schedule the next occurrence
+        }, delay);
+
+        this.jobs.set(processId, { expression, timer });
+      } catch (err) {
+        console.error(`[bm2] Cron schedule error for process ${processId}:`, err);
+      }
+    };
+
+    scheduleNext();
+  }
+
+  cancel(processId: number) {
+    const job = this.jobs.get(processId);
+    if (job) {
+      clearTimeout(job.timer);
+      this.jobs.delete(processId);
+    }
+  }
+
+  cancelAll() {
+    for (const [id] of this.jobs) {
+      this.cancel(id);
+    }
+  }
+
+  listJobs() {
+    const result: Array<{ processId: number; expression: string }> = [];
+    for (const [id, job] of this.jobs) {
+      result.push({ processId: id, expression: job.expression });
+    }
+    return result;
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+import { ProcessManager } from "./process-manager";
+import { Dashboard } from "./dashboard";
+import { ModuleManager } from "./module-manager";
+import {
+  DAEMON_SOCKET,
+  DAEMON_PID_FILE,
+  DASHBOARD_PORT,
+  METRICS_PORT,
+} from "./constants";
+import { ensureDirs } from "./utils";
+import { unlinkSync, existsSync } from "fs";
+import type { DaemonMessage, DaemonResponse } from "./types";
+import type { BunRequest, Server } from "bun";
+
+ensureDirs();
+
+let server: Server<any> | null = null
+const pm = new ProcessManager();
+const dashboard = new Dashboard(pm);
+const moduleManager = new ModuleManager(pm);
+
+// Clean up existing socket
+if (existsSync(DAEMON_SOCKET)) {
+  try { unlinkSync(DAEMON_SOCKET); } catch {}
+}
+
+// Write PID file
+await Bun.write(DAEMON_PID_FILE, String(process.pid));
+
+// Load modules
+await moduleManager.loadAll();
+
+// Start metric collection
+const metricsInterval = setInterval(() => {
+  pm.getMetrics();
+}, 2000);
+
+
+const handleServerRequests = async (req: Request) => {
+             
+  if (req.method !== "POST") {
+    return Response.json(
+      { type: "error", error: "Method Not Allowed", success: false },
+      { status: 405 }
+    )
+  }
+
+  try {
+        
+    const msg: DaemonMessage = await req.json() as DaemonMessage;
+                                
+    const response = await handleMessage(msg);
+        
+    return Response.json(response);
+        
+  } catch (err: any) {
+    return Response.json(
+      { type: "error", error: err.message, success: false },
+      { status: 500 }
+    );
+  }
+};
+
+const serverOptions = {
+  unix: DAEMON_SOCKET,
+  fetch: handleServerRequests
+}
+
+async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
+  try {
+    switch (msg.type) {
+      case "start": {
+        const states = await pm.start(msg.data);
+        return { type: "start", data: states, success: true, id: msg.id };
+      }
+      case "stop": {
+        const states = await pm.stop(msg.data.target);
+        return { type: "stop", data: states, success: true, id: msg.id };
+      }
+      case "restart": {
+        const states = await pm.restart(msg.data.target);
+        return { type: "restart", data: states, success: true, id: msg.id };
+      }
+      case "reload": {
+        const states = await pm.reload(msg.data.target);
+        return { type: "reload", data: states, success: true, id: msg.id };
+      }
+      case "delete": {
+        const states = await pm.del(msg.data.target);
+        return { type: "delete", data: states, success: true, id: msg.id };
+      }
+      case "scale": {
+        const states = await pm.scale(msg.data.target, msg.data.count);
+        return { type: "scale", data: states, success: true, id: msg.id };
+      }
+      case "stopAll": {
+        const states = await pm.stopAll();
+        return { type: "stopAll", data: states, success: true, id: msg.id };
+      }
+      case "restartAll": {
+        const states = await pm.restartAll();
+        return { type: "restartAll", data: states, success: true, id: msg.id };
+      }
+      case "reloadAll": {
+        const states = await pm.reloadAll();
+        return { type: "reloadAll", data: states, success: true, id: msg.id };
+      }
+      case "deleteAll": {
+        const states = await pm.deleteAll();
+        return { type: "deleteAll", data: states, success: true, id: msg.id };
+      }
+      case "list": {
+        return { type: "list", data: pm.list(), success: true, id: msg.id };
+      }
+      case "describe": {
+        return { type: "describe", data: pm.describe(msg.data.target), success: true, id: msg.id };
+      }
+      case "logs": {
+        const logs = await pm.getLogs(msg.data.target, msg.data.lines);
+        return { type: "logs", data: logs, success: true, id: msg.id };
+      }
+      case "flush": {
+        await pm.flushLogs(msg.data?.target);
+        return { type: "flush", success: true, id: msg.id };
+      }
+      case "save": {
+        await pm.save();
+        return { type: "save", success: true, id: msg.id };
+      }
+      case "resurrect": {
+        const states = await pm.resurrect();
+        return { type: "resurrect", data: states, success: true, id: msg.id };
+      }
+      case "ecosystem": {
+        const states = await pm.startEcosystem(msg.data);
+        return { type: "ecosystem", data: states, success: true, id: msg.id };
+      }
+      case "signal": {
+        await pm.sendSignal(msg.data.target, msg.data.signal);
+        return { type: "signal", success: true, id: msg.id };
+      }
+      case "reset": {
+        const states = await pm.reset(msg.data.target);
+        return { type: "reset", data: states, success: true, id: msg.id };
+      }
+      case "metrics": {
+        const metrics = await pm.getMetrics();
+        return { type: "metrics", data: metrics, success: true, id: msg.id };
+      }
+      case "metricsHistory": {
+        const history = pm.getMetricsHistory(msg.data?.seconds || 300);
+        return { type: "metricsHistory", data: history, success: true, id: msg.id };
+      }
+      case "prometheus": {
+        const prom = pm.getPrometheusMetrics();
+        return { type: "prometheus", data: prom, success: true, id: msg.id };
+      }
+      case "dashboard": {
+        const port = msg.data?.port || DASHBOARD_PORT;
+        const metricsPort = msg.data?.metricsPort || METRICS_PORT;
+        dashboard.start(port, metricsPort);
+        return { type: "dashboard", data: { port, metricsPort }, success: true, id: msg.id };
+      }
+      case "dashboardStop": {
+        dashboard.stop();
+        return { type: "dashboardStop", success: true, id: msg.id };
+      }
+      case "moduleInstall": {
+        const path = await moduleManager.install(msg.data.module);
+        return { type: "moduleInstall", data: { path }, success: true, id: msg.id };
+      }
+      case "moduleUninstall": {
+        await moduleManager.uninstall(msg.data.module);
+        return { type: "moduleUninstall", success: true, id: msg.id };
+      }
+        
+      case "moduleList": {
+        return { type: "moduleList", data: moduleManager.list(), success: true, id: msg.id };
+      }
+        
+      case "daemonReload": {
+        if (!server) {
+          server = Bun.serve(serverOptions);
+        } else {
+          server.reload(serverOptions)
+        }
+        
+        return { type: "daemonReload", data: `Daemon reloaded`, success: true, id: msg.id };
+      }
+      
+      case "ping": {
+        return {
+          type: "pong",
+          data: { pid: process.pid, uptime: process.uptime() },
+          success: true,
+          id: msg.id,
+        };
+      }
+        
+      case "kill": {
+        await pm.stopAll();
+        dashboard.stop();
+        clearInterval(metricsInterval);
+        setTimeout(() => process.exit(0), 200);
+        return { type: "kill", success: true, id: msg.id };
+      }
+      default:
+        return { type: "error", error: `Unknown command: ${msg.type}`, success: false, id: msg.id };
+    }
+  } catch (err: any) {
+    return { type: "error", error: err.message, success: false, id: msg.id };
+  }
+}
+
+
+server = Bun.serve(serverOptions);
+
+console.log(`Listening on ${server.url}`);
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ export function getDashboardHTML(): string {
+   return `<!DOCTYPE html>
+ <html lang="en">
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>BM2 Dashboard</title>
+ <style>
+   * { margin: 0; padding: 0; box-sizing: border-box; }
+   :root {
+     --bg: #0d1117; --surface: #161b22; --border: #30363d;
+     --text: #c9d1d9; --text-dim: #8b949e; --accent: #58a6ff;
+     --green: #3fb950; --red: #f85149; --yellow: #d29922;
+     --orange: #db6d28; --purple: #bc8cff;
+   }
+   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: var(--bg); color: var(--text); }
+   .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+   .header h1 { font-size: 20px; color: var(--accent); }
+   .header .meta { color: var(--text-dim); font-size: 13px; }
+   .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
+   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+   .card h3 { font-size: 13px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }
+   .stat { font-size: 28px; font-weight: 700; }
+   .stat.green { color: var(--green); }
+   .stat.red { color: var(--red); }
+   .stat.yellow { color: var(--yellow); }
+   table { width: 100%; border-collapse: collapse; }
+   th { text-align: left; padding: 10px 12px; color: var(--text-dim); font-size: 12px; text-transform: uppercase; border-bottom: 2px solid var(--border); letter-spacing: 0.5px; }
+   td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; font-family: monospace; }
+   tr:hover td { background: rgba(88, 166, 255, 0.05); }
+   .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+   .status.online { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+   .status.stopped { background: rgba(139, 148, 158, 0.15); color: var(--text-dim); }
+   .status.errored { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+   .status.launching, .status.waiting-restart { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+   .btn { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; transition: all 0.2s; }
+   .btn:hover { border-color: var(--accent); color: var(--accent); }
+   .btn.danger:hover { border-color: var(--red); color: var(--red); }
+   .btn.success:hover { border-color: var(--green); color: var(--green); }
+   .actions { display: flex; gap: 6px; }
+   .chart-container { height: 200px; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+   .chart-title { font-size: 13px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 8px; }
+   canvas { width: 100% !important; height: 160px !important; }
+   .logs-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+   .logs-panel h3 { font-size: 13px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 12px; }
+   .log-output { background: #000; border-radius: 4px; padding: 12px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: var(--text); }
+   .log-output .err { color: var(--red); }
+   .log-output .timestamp { color: var(--text-dim); }
+   .tabs { display: flex; gap: 0; margin-bottom: 16px; }
+   .tab { padding: 8px 16px; background: var(--surface); border: 1px solid var(--border); cursor: pointer; font-size: 13px; color: var(--text-dim); transition: all 0.2s; }
+   .tab:first-child { border-radius: 6px 0 0 6px; }
+   .tab:last-child { border-radius: 0 6px 6px 0; }
+   .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+   .system-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+   .sys-stat { text-align: center; }
+   .sys-stat .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; }
+   .sys-stat .value { font-size: 18px; font-weight: 600; margin-top: 4px; }
+   .progress-bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+   .progress-bar .fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+   .live-indicator { display: inline-block; width: 8px; height: 8px; background: var(--green); border-radius: 50%; margin-right: 8px; animation: pulse 2s infinite; }
+ </style>
+ </head>
+ <body>
+ <div class="header">
+   <h1>⚡ BM2 Dashboard</h1>
+   <div class="meta"><span class="live-indicator"></span>Live • <span id="update-time">-</span></div>
+ </div>
+ <div class="container">
+   <div class="grid" id="stats-grid"></div>
+   <div class="chart-container">
+     <div class="chart-title">CPU & Memory Over Time</div>
+     <canvas id="chart"></canvas>
+   </div>
+   <div class="card" style="margin-bottom: 24px;">
+     <h3>System</h3>
+     <div class="system-info" id="system-info"></div>
+   </div>
+   <div class="card" style="margin-bottom: 24px;">
+     <h3>Processes</h3>
+     <table>
+       <thead>
+         <tr>
+           <th>ID</th><th>Name</th><th>Status</th><th>PID</th>
+           <th>CPU</th><th>Memory</th><th>Restarts</th><th>Uptime</th>
+           <th>Actions</th>
+         </tr>
+       </thead>
+       <tbody id="process-table"></tbody>
+     </table>
+   </div>
+   <div class="logs-panel">
+     <h3>Logs</h3>
+     <div class="tabs" id="log-tabs"></div>
+     <div class="log-output" id="log-output">Select a process to view logs</div>
+   </div>
+ </div>
+ <script>
+ const WS_URL = location.origin.replace('http','ws') + '/ws';
+ let ws;
+ let chartData = { labels: [], cpu: [], memory: [] };
+ let selectedLogProcess = null;
+ 
+ function formatBytes(b) {
+   if (!b) return '0 B';
+   const u = ['B','KB','MB','GB'];
+   const i = Math.floor(Math.log(b)/Math.log(1024));
+   return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i];
+ }
+ function formatUptime(ms) {
+   const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24);
+   if (d>0) return d+'d '+h%24+'h';
+   if (h>0) return h+'h '+m%60+'m';
+   if (m>0) return m+'m '+s%60+'s';
+   return s+'s';
+ }
+ 
+ function connect() {
+   ws = new WebSocket(WS_URL);
+   ws.onmessage = (e) => {
+     const data = JSON.parse(e.data);
+     if (data.type === 'state') render(data.data);
+     if (data.type === 'logs') renderLogs(data.data);
+   };
+   ws.onclose = () => setTimeout(connect, 2000);
+   ws.onerror = () => ws.close();
+ }
+ 
+ function send(type, data) { ws?.send(JSON.stringify({type,data})); }
+ 
+ function render(state) {
+   const { processes, metrics } = state;
+   document.getElementById('update-time').textContent = new Date().toLocaleTimeString();
+ 
+   // Stats cards
+   const online = processes.filter(p => p.status==='online').length;
+   const errored = processes.filter(p => p.status==='errored').length;
+   const totalMem = processes.reduce((s,p) => s+p.monit.memory, 0);
+   const totalCpu = processes.reduce((s,p) => s+p.monit.cpu, 0);
+ 
+   document.getElementById('stats-grid').innerHTML = \`
+     <div class="card"><h3>Online</h3><div class="stat green">\${online}</div></div>
+     <div class="card"><h3>Errored</h3><div class="stat red">\${errored}</div></div>
+     <div class="card"><h3>Total CPU</h3><div class="stat">\${totalCpu.toFixed(1)}%</div></div>
+     <div class="card"><h3>Total Memory</h3><div class="stat">\${formatBytes(totalMem)}</div></div>
+   \`;
+ 
+   // System info
+   if (metrics?.system) {
+     const sys = metrics.system;
+     const memPct = ((sys.totalMemory - sys.freeMemory) / sys.totalMemory * 100).toFixed(1);
+     document.getElementById('system-info').innerHTML = \`
+       <div class="sys-stat"><div class="label">Platform</div><div class="value">\${sys.platform}</div></div>
+       <div class="sys-stat"><div class="label">CPUs</div><div class="value">\${sys.cpuCount}</div></div>
+       <div class="sys-stat"><div class="label">Load (1m)</div><div class="value">\${sys.loadAvg[0].toFixed(2)}</div></div>
+       <div class="sys-stat">
+         <div class="label">Memory</div><div class="value">\${memPct}%</div>
+         <div class="progress-bar"><div class="fill" style="width:\${memPct}%;background:\${memPct>80?'var(--red)':memPct>60?'var(--yellow)':'var(--green)'}"></div></div>
+       </div>
+     \`;
+   }
+ 
+   // Chart data
+   const now = new Date().toLocaleTimeString();
+   chartData.labels.push(now);
+   chartData.cpu.push(totalCpu);
+   chartData.memory.push(totalMem / 1024 / 1024);
+   if (chartData.labels.length > 60) {
+     chartData.labels.shift(); chartData.cpu.shift(); chartData.memory.shift();
+   }
+   drawChart();
+ 
+   // Process table
+   document.getElementById('process-table').innerHTML = processes.map(p => \`
+     <tr>
+       <td>\${p.pm_id}</td>
+       <td>\${p.name}</td>
+       <td><span class="status \${p.status}">\${p.status}</span></td>
+       <td>\${p.pid||'-'}</td>
+       <td>\${p.monit.cpu.toFixed(1)}%</td>
+       <td>\${formatBytes(p.monit.memory)}</td>
+       <td>\${p.bm2_env.restart_time}</td>
+       <td>\${p.status==='online' ? formatUptime(Date.now()-p.bm2_env.pm_uptime) : '-'}</td>
+       <td class="actions">
+         <button class="btn success" onclick="send('restart',{target:'\${p.pm_id}'})">↻</button>
+         <button class="btn danger" onclick="send('stop',{target:'\${p.pm_id}'})">■</button>
+         <button class="btn" onclick="viewLogs(\${p.pm_id},'\${p.name}')">📋</button>
+       </td>
+     </tr>
+   \`).join('');
+ 
+   // Log tabs
+   document.getElementById('log-tabs').innerHTML = processes.map(p => \`
+     <div class="tab \${selectedLogProcess===p.pm_id?'active':''}" onclick="viewLogs(\${p.pm_id},'\${p.name}')">\${p.name}</div>
+   \`).join('');
+ }
+ 
+ function viewLogs(id, name) {
+   selectedLogProcess = id;
+   send('getLogs', { target: id, lines: 50 });
+ }
+ 
+ function renderLogs(logs) {
+   if (!logs || !logs.length) return;
+   const el = document.getElementById('log-output');
+   let html = '';
+   for (const log of logs) {
+     if (log.out) html += log.out.split('\\n').map(l => {
+       const m = l.match(/^\\[([^\\]]+)\\]/);
+       return m ? '<span class="timestamp">['+m[1]+']</span>'+l.slice(m[0].length) : l;
+     }).join('\\n');
+     if (log.err) html += log.err.split('\\n').map(l => '<span class="err">'+l+'</span>').join('\\n');
+   }
+   el.innerHTML = html || 'No logs available';
+   el.scrollTop = el.scrollHeight;
+ }
+ 
+ function drawChart() {
+   const canvas = document.getElementById('chart');
+   const ctx = canvas.getContext('2d');
+   const w = canvas.offsetWidth, h = 160;
+   canvas.width = w * 2; canvas.height = h * 2;
+   ctx.scale(2, 2);
+   ctx.clearRect(0, 0, w, h);
+ 
+   const len = chartData.labels.length;
+   if (len < 2) return;
+ 
+   const maxCpu = Math.max(...chartData.cpu, 1);
+   const maxMem = Math.max(...chartData.memory, 1);
+   const stepX = w / (len - 1);
+ 
+   // Grid
+   ctx.strokeStyle = '#30363d'; ctx.lineWidth = 0.5;
+   for (let i = 0; i < 4; i++) {
+     const y = h * i / 4;
+     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+   }
+ 
+   // CPU line
+   ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+   ctx.beginPath();
+   chartData.cpu.forEach((v, i) => {
+     const x = i * stepX, y = h - (v / maxCpu) * (h - 20);
+     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+   });
+   ctx.stroke();
+ 
+   // Memory line
+   ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2;
+   ctx.beginPath();
+   chartData.memory.forEach((v, i) => {
+     const x = i * stepX, y = h - (v / maxMem) * (h - 20);
+     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+   });
+   ctx.stroke();
+ 
+   // Legend
+   ctx.font = '11px monospace';
+   ctx.fillStyle = '#58a6ff'; ctx.fillText('● CPU ' + chartData.cpu[len-1]?.toFixed(1) + '%', 10, 14);
+   ctx.fillStyle = '#3fb950'; ctx.fillText('● MEM ' + chartData.memory[len-1]?.toFixed(1) + 'MB', 120, 14);
+ }
+ 
+ connect();
+ setInterval(() => { if (ws?.readyState === 1) send('getState', {}); }, 2000);
+ </script>
+ </body>
+ </html>`;
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+import { ProcessManager } from "./process-manager";
+import { getDashboardHTML } from "./dashboard-ui";
+import { DASHBOARD_PORT, METRICS_PORT } from "./constants";
+import type { Server, ServerWebSocket } from "bun";
+
+export class Dashboard {
+
+  private server: Server<unknown> | null = null;
+  private metricsServer: Server<unknown> | null = null;
+
+  private clients: Set<ServerWebSocket<unknown>> = new Set();
+  private pm: ProcessManager;
+  private updateInterval: ReturnType<typeof setInterval> | null = null;
+
+  constructor(pm: ProcessManager) {
+    this.pm = pm;
+  }
+
+  start(port: number = DASHBOARD_PORT, metricsPort: number = METRICS_PORT) {
+    // Dashboard + WebSocket server
+    this.server = Bun.serve<unknown>({
+      port,
+      fetch: (req, server) => {
+        const url = new URL(req.url);
+
+        if (url.pathname === "/ws") {
+          if (server.upgrade(req, { data: undefined })) return;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
+
+        if (url.pathname === "/api/processes") {
+          return Response.json(this.pm.list());
+        }
+
+        if (url.pathname === "/api/metrics") {
+          const metrics = this.pm.monitor.getLatest();
+          return Response.json(metrics);
+        }
+
+        if (url.pathname === "/api/metrics/history") {
+          const seconds = parseInt(url.searchParams.get("seconds") || "300");
+          return Response.json(this.pm.getMetricsHistory(seconds));
+        }
+
+        if (url.pathname === "/api/prometheus" || url.pathname === "/metrics") {
+          return new Response(this.pm.getPrometheusMetrics(), {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
+        }
+
+        // Action endpoints
+        if (req.method === "POST") {
+          return this.handleAction(url.pathname, req);
+        }
+
+        // Serve dashboard HTML
+        return new Response(getDashboardHTML(), {
+          headers: { "Content-Type": "text/html" },
+        });
+      },
+      websocket: {
+        open: (ws) => {
+          this.clients.add(ws);
+          // Send initial state
+          const state = {
+            processes: this.pm.list(),
+            metrics: this.pm.monitor.getLatest(),
+          };
+          ws.send(JSON.stringify({ type: "state", data: state }));
+        },
+        message: async (ws, message) => {
+          try {
+            const msg = JSON.parse(String(message));
+            await this.handleWsMessage(ws, msg);
+          } catch {}
+        },
+        close: (ws) => {
+          this.clients.delete(ws);
+        },
+      },
+    });
+
+    // Separate Prometheus metrics server
+    this.metricsServer = Bun.serve({
+      port: metricsPort,
+      fetch: (req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/metrics") {
+          return new Response(this.pm.getPrometheusMetrics(), {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
+        }
+        return new Response("BM2 Metrics Server\nGET /metrics for Prometheus format", {
+          status: 200,
+        });
+      },
+    });
+
+    // Periodic broadcast
+    this.updateInterval = setInterval(async () => {
+      await this.pm.getMetrics(); // Collect snapshot
+      this.broadcast();
+    }, 2000);
+
+    console.log(`[bm2] Dashboard running at http://localhost:${port}`);
+    console.log(`[bm2] Prometheus metrics at http://localhost:${metricsPort}/metrics`);
+  }
+
+  private async handleAction(pathname: string, req: Request): Promise<Response> {
+    try {
+
+        const body = (await req.json()) as { target?: string; count?: number };
+
+      switch (pathname) {
+        case "/api/restart":
+          return Response.json(await this.pm.restart(body.target || "all"));
+        case "/api/stop":
+          return Response.json(await this.pm.stop(body.target || "all"));
+        case "/api/reload":
+          return Response.json(await this.pm.reload(body.target || "all"));
+        case "/api/delete":
+          return Response.json(await this.pm.del(body.target!));
+        case "/api/scale":
+          return Response.json(await this.pm.scale(body.target!, body.count!));
+        case "/api/flush":
+          await this.pm.flushLogs(body.target);
+          return Response.json({ success: true });
+        default:
+          return new Response("Not Found", { status: 404 });
+      }
+    } catch (err: any) {
+      return Response.json({ error: err.message }, { status: 500 });
+    }
+  }
+
+  private async handleWsMessage(ws: ServerWebSocket<unknown>, msg: any) {
+    switch (msg.type) {
+      case "getState": {
+        const state = {
+          processes: this.pm.list(),
+          metrics: this.pm.monitor.getLatest(),
+        };
+        ws.send(JSON.stringify({ type: "state", data: state }));
+        break;
+      }
+      case "getLogs": {
+        const logs = await this.pm.getLogs(msg.data.target, msg.data.lines || 50);
+        ws.send(JSON.stringify({ type: "logs", data: logs }));
+        break;
+      }
+      case "restart":
+        await this.pm.restart(msg.data.target);
+        break;
+      case "stop":
+        await this.pm.stop(msg.data.target);
+        break;
+      case "reload":
+        await this.pm.reload(msg.data.target);
+        break;
+      case "scale":
+        await this.pm.scale(msg.data.target, msg.data.count);
+        break;
+    }
+  }
+
+  private broadcast() {
+    const state = {
+      processes: this.pm.list(),
+      metrics: this.pm.monitor.getLatest(),
+    };
+    const message = JSON.stringify({ type: "state", data: state });
+    for (const client of this.clients) {
+      try {
+        client.send(message);
+      } catch {
+        this.clients.delete(client);
+      }
+    }
+  }
+
+  stop() {
+    if (this.updateInterval) clearInterval(this.updateInterval);
+    if (this.server) this.server.stop();
+    if (this.metricsServer) this.metricsServer.stop();
+    this.clients.clear();
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ import type { DeployConfig } from "./types";
+ 
+ export class DeployManager {
+   async deploy(config: DeployConfig, command?: string): Promise<void> {
+     const hosts = Array.isArray(config.host) ? config.host : [config.host];
+     const sshOpts = config.ssh_options || "";
+ 
+     for (const host of hosts) {
+       const target = `${config.user}@${host}`;
+       console.log(`\n[bm2] Deploying to ${target}...`);
+ 
+       const remotePath = config.path;
+       const currentPath = `${remotePath}/current`;
+       const sourcePath = `${remotePath}/source`;
+ 
+       // Pre-deploy hook
+       if (config.preDeploy) {
+         console.log(`[bm2] Running pre-deploy: ${config.preDeploy}`);
+         await this.localExec(config.preDeploy);
+       }
+ 
+       // Setup directory structure
+       await this.remoteExec(
+         target,
+         `mkdir -p ${remotePath} ${sourcePath}`,
+         sshOpts
+       );
+ 
+       // Clone or pull
+       const hasRepo = await this.remoteExec(
+         target,
+         `test -d ${sourcePath}/.git && echo "yes" || echo "no"`,
+         sshOpts
+       );
+ 
+       if (hasRepo.trim() === "yes") {
+         await this.remoteExec(
+           target,
+           `cd ${sourcePath} && git fetch --all && git reset --hard ${config.ref}`,
+           sshOpts
+         );
+       } else {
+         await this.remoteExec(
+           target,
+           `git clone ${config.repo} ${sourcePath} && cd ${sourcePath} && git checkout ${config.ref}`,
+           sshOpts
+         );
+       }
+ 
+       // Create release
+       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+       const releasePath = `${remotePath}/releases/${timestamp}`;
+ 
+       await this.remoteExec(
+         target,
+         `mkdir -p ${remotePath}/releases && cp -r ${sourcePath} ${releasePath}`,
+         sshOpts
+       );
+ 
+       // Symlink current
+       await this.remoteExec(
+         target,
+         `rm -f ${currentPath} && ln -s ${releasePath} ${currentPath}`,
+         sshOpts
+       );
+ 
+       // Post-deploy hook
+       if (config.postDeploy) {
+         console.log(`[bm2] Running post-deploy: ${config.postDeploy}`);
+         const envStr = config.env
+           ? Object.entries(config.env)
+               .map(([k, v]) => `${k}=${v}`)
+               .join(" ")
+           : "";
+         await this.remoteExec(
+           target,
+           `cd ${currentPath} && ${envStr} ${config.postDeploy}`,
+           sshOpts
+         );
+       }
+ 
+       // Cleanup old releases (keep last 5)
+       await this.remoteExec(
+         target,
+         `cd ${remotePath}/releases && ls -dt */ | tail -n +6 | xargs rm -rf`,
+         sshOpts
+       );
+ 
+       console.log(`[bm2] ✓ Deploy to ${target} complete`);
+     }
+   }
+ 
+   async setup(config: DeployConfig): Promise<void> {
+     const hosts = Array.isArray(config.host) ? config.host : [config.host];
+     const sshOpts = config.ssh_options || "";
+ 
+     for (const host of hosts) {
+       const target = `${config.user}@${host}`;
+       console.log(`[bm2] Setting up ${target}...`);
+ 
+       await this.remoteExec(
+         target,
+         `mkdir -p ${config.path} ${config.path}/releases ${config.path}/source ${config.path}/shared`,
+         sshOpts
+       );
+ 
+       if (config.preSetup) {
+         await this.remoteExec(target, config.preSetup, sshOpts);
+       }
+ 
+       // Clone repo
+       await this.remoteExec(
+         target,
+         `git clone ${config.repo} ${config.path}/source && cd ${config.path}/source && git checkout ${config.ref}`,
+         sshOpts
+       );
+ 
+       if (config.postSetup) {
+         await this.remoteExec(
+           target,
+           `cd ${config.path}/source && ${config.postSetup}`,
+           sshOpts
+         );
+       }
+ 
+       console.log(`[bm2] ✓ Setup complete for ${target}`);
+     }
+   }
+ 
+   private async remoteExec(target: string, command: string, sshOpts: string): Promise<string> {
+     const args = ["ssh"];
+     if (sshOpts) args.push(...sshOpts.split(" "));
+     args.push(target, command);
+ 
+     const proc = Bun.spawn(args, {
+       stdout: "pipe",
+       stderr: "pipe",
+     });
+ 
+     const stdout = await new Response(proc.stdout).text();
+     const stderr = await new Response(proc.stderr).text();
+     const exitCode = await proc.exited;
+ 
+     if (exitCode !== 0 && stderr) {
+       console.error(`[bm2] Remote error: ${stderr}`);
+     }
+     if (stdout.trim()) {
+       console.log(stdout.trim());
+     }
+ 
+     return stdout;
+   }
+ 
+   private async localExec(command: string): Promise<string> {
+     const proc = Bun.spawn(["sh", "-c", command], {
+       stdout: "pipe",
+       stderr: "pipe",
+     });
+ 
+     const stdout = await new Response(proc.stdout).text();
+     const stderr = await new Response(proc.stderr).text();
+     const exitCode = await proc.exited;
+ 
+     if (exitCode !== 0 && stderr) {
+       console.error(`[bm2] Local error: ${stderr}`);
+     }
+     if (stdout.trim()) {
+       console.log(stdout.trim());
+     }
+ 
+     return stdout;
+   }
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+import { join } from "path";
+import { BM2_HOME } from "./constants";
+
+export class EnvManager {
+  private envFile = join(BM2_HOME, "env-registry.json");
+
+  async getEnvs(): Promise<Record<string, Record<string, string>>> {
+    try {
+      const file = Bun.file(this.envFile);
+      if (await file.exists()) return await file.json();
+    } catch {}
+    return {};
+  }
+
+  async setEnv(name: string, key: string, value: string): Promise<void> {
+    const envs = await this.getEnvs();
+    if (!envs[name]) envs[name] = {};
+    envs[name][key] = value;
+    await Bun.write(this.envFile, JSON.stringify(envs, null, 2));
+  }
+
+  async getEnv(name: string): Promise<Record<string, string>> {
+    const envs = await this.getEnvs();
+    return envs[name] || {};
+  }
+
+  async deleteEnv(name: string, key?: string): Promise<void> {
+    const envs = await this.getEnvs();
+    if (key) {
+      delete envs[name]?.[key];
+    } else {
+      delete envs[name];
+    }
+    await Bun.write(this.envFile, JSON.stringify(envs, null, 2));
+  }
+
+  async loadDotEnv(filePath: string): Promise<Record<string, string>> {
+    const file = Bun.file(filePath);
+    if (!(await file.exists())) return {};
+
+    const content = await file.text();
+    const env: Record<string, string> = {};
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = trimmed.substring(0, eqIdx).trim();
+      let value = trimmed.substring(eqIdx + 1).trim();
+      // Remove quotes
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      env[key] = value;
+    }
+
+    return env;
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ import type { ProcessContainer } from "./process-container";
+ 
+ export class GracefulReload {
+     async reload(
+       containers: ProcessContainer[],
+       options: {
+         delay?: number;
+         listenTimeout?: number;
+       } = {}
+     ): Promise<void> {
+       const delay = options.delay || 1000;
+       const listenTimeout = options.listenTimeout || 3000;
+     
+       for (let i = 0; i < containers.length; i++) {
+         const container = containers[i];
+         if (!container) continue;
+         
+         const oldPid = container.pid;
+     
+         console.log(`[bm2] Graceful reload: reloading ${container.name} (${i + 1}/${containers.length})`);
+     
+         const startPromise = container.start();
+     
+         if (container.config.waitReady) {
+           await Promise.race([
+             new Promise<void>((resolve) => {
+               const checkReady = setInterval(() => {
+                 if (container.status === "online") {
+                   clearInterval(checkReady);
+                   resolve();
+                 }
+               }, 100);
+             }),
+             new Promise<void>((resolve) =>
+               setTimeout(resolve, listenTimeout)
+             ),
+           ]);
+         } else {
+           await startPromise;
+           await new Promise((resolve) => setTimeout(resolve, delay));
+         }
+     
+         if (oldPid) {
+           try {
+             process.kill(oldPid, "SIGTERM");
+           } catch {}
+         }
+     
+         if (i < containers.length - 1) {
+           await new Promise((resolve) => setTimeout(resolve, delay));
+         }
+       }
+     
+       console.log(`[bm2] Graceful reload complete`);
+     }
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+import type { HealthCheckConfig } from "./types";
+
+export class HealthChecker {
+  private checks: Map<number, {
+    config: HealthCheckConfig;
+    timer: ReturnType<typeof setInterval>;
+    consecutiveFails: number;
+    lastStatus: "healthy" | "unhealthy" | "unknown";
+    lastCheck: number;
+    lastResponseTime: number;
+  }> = new Map();
+
+  startCheck(
+    processId: number,
+    config: HealthCheckConfig,
+    onUnhealthy: (processId: number, reason: string) => void
+  ) {
+    this.stopCheck(processId);
+
+    const state: {
+      config: HealthCheckConfig;
+      timer: ReturnType<typeof setInterval>;
+      consecutiveFails: number;
+      lastStatus: "healthy" | "unhealthy" | "unknown";
+      lastCheck: number;
+      lastResponseTime: number;
+    } = {
+      config,
+      consecutiveFails: 0,
+      lastStatus: "unknown",
+      lastCheck: 0,
+      lastResponseTime: 0,
+      timer: setInterval(async () => {
+        const start = Date.now();
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), config.timeout);
+
+          const response = await fetch(config.url, {
+            signal: controller.signal,
+            method: "GET",
+          });
+
+          clearTimeout(timeout);
+          state.lastResponseTime = Date.now() - start;
+          state.lastCheck = Date.now();
+
+          if (response.ok) {
+            state.consecutiveFails = 0;
+            state.lastStatus = "healthy";
+          } else {
+            state.consecutiveFails++;
+            state.lastStatus = "unhealthy";
+          }
+        } catch {
+          state.consecutiveFails++;
+          state.lastStatus = "unhealthy";
+          state.lastResponseTime = Date.now() - start;
+          state.lastCheck = Date.now();
+        }
+
+        if (state.consecutiveFails >= config.maxFails) {
+          onUnhealthy(processId, `Health check failed ${state.consecutiveFails} times consecutively`);
+          state.consecutiveFails = 0;
+        }
+      }, config.interval),
+    };
+
+    this.checks.set(processId, state);
+  }
+
+  stopCheck(processId: number) {
+    const check = this.checks.get(processId);
+    if (check) {
+      clearInterval(check.timer);
+      this.checks.delete(processId);
+    }
+  }
+
+  getStatus(processId: number) {
+    const check = this.checks.get(processId);
+    if (!check) return null;
+    return {
+      status: check.lastStatus,
+      lastCheck: check.lastCheck,
+      lastResponseTime: check.lastResponseTime,
+      consecutiveFails: check.consecutiveFails,
+    };
+  }
+
+  stopAll() {
+    for (const [id] of this.checks) {
+      this.stopCheck(id);
+    }
+  }
+}
+#!/usr/bin/env bun
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+import { existsSync, readFileSync, unlinkSync } from "fs";
+import { resolve, join, extname } from "path";
+import {
+  APP_NAME,
+  VERSION,
+  DAEMON_SOCKET,
+  DAEMON_PID_FILE,
+  BM2_HOME,
+  DASHBOARD_PORT,
+  METRICS_PORT,
+  DAEMON_OUT_LOG_FILE,
+  DAEMON_ERR_LOG_FILE,
+} from "./constants";
+import { ensureDirs, formatBytes, formatUptime, colorize, padRight } from "./utils";
+import { DeployManager } from "./deploy";
+import { StartupManager } from "./startup-manager";
+import { EnvManager } from "./env-manager";
+import type {
+  DaemonMessage,
+  DaemonResponse,
+  StartOptions,
+  EcosystemConfig,
+  ProcessState,
+} from "./types";
+import { statusColor } from "./colors";
+import { liveWatchProcess, printProcessTable } from "./process-table";
+
+// ---------------------------------------------------------------------------
+// Ensure directory structure exists
+// ---------------------------------------------------------------------------
+ensureDirs();
+
+
+
+// ---------------------------------------------------------------------------
+// Ecosystem config loader
+// ---------------------------------------------------------------------------
+
+async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
+  const abs = resolve(filePath);
+  if (!existsSync(abs)) {
+    throw new Error(`Ecosystem file not found: ${abs}`);
+  }
+
+  const ext = extname(abs);
+  if (ext === ".json") {
+    return await Bun.file(abs).json();
+  }
+
+  // .ts, .js, .mjs — dynamic import
+  const mod = await import(abs);
+  return mod.default || mod;
+}
+
+// ---------------------------------------------------------------------------
+// Parse CLI flags into StartOptions
+// ---------------------------------------------------------------------------
+
+function parseStartFlags(args: string[], scriptOrConfig: string): StartOptions {
+  const opts: StartOptions = { script: scriptOrConfig };
+
+  let i = 0;
+  const positionalArgs: string[] = [];
+
+  while (i < args.length) {
+    const arg = args[i]!;
+
+    switch (arg) {
+      case "--name":
+      case "-n":
+        opts.name = args[++i];
+        break;
+      case "--instances":
+      case "-i":
+        opts.instances = parseInt(args[++i]!) || 1;
+        break;
+      case "--cwd":
+        opts.cwd = args[++i];
+        break;
+      case "--interpreter":
+        opts.interpreter = args[++i];
+        break;
+      case "--interpreter-args":
+        opts.interpreterArgs = args[++i]!.split(" ");
+        break;
+      case "--node-args":
+        opts.nodeArgs = args[++i]!.split(" ");
+        break;
+      case "--watch":
+      case "-w":
+        opts.watch = true;
+        break;
+      case "--watch-path":
+        if (!Array.isArray(opts.watch)) opts.watch = [];
+        (opts.watch as string[]).push(args[++i]!);
+        break;
+      case "--ignore-watch":
+        opts.ignoreWatch = args[++i]!.split(",");
+        break;
+      case "--exec-mode":
+      case "-x":
+        opts.execMode = args[++i] as "fork" | "cluster";
+        break;
+      case "--max-memory-restart":
+        opts.maxMemoryRestart = args[++i];
+        break;
+      case "--max-restarts":
+        opts.maxRestarts = parseInt(args[++i]!);
+        break;
+      case "--min-uptime":
+        opts.minUptime = parseInt(args[++i]!);
+        break;
+      case "--kill-timeout":
+        opts.killTimeout = parseInt(args[++i]!);
+        break;
+      case "--restart-delay":
+        opts.restartDelay = parseInt(args[++i]!);
+        break;
+      case "--cron":
+      case "--cron-restart":
+        opts.cron = args[++i];
+        break;
+      case "--no-autorestart":
+        opts.autorestart = false;
+        break;
+      case "--env": {
+        const envPair = args[++i]!;
+        const eqIdx = envPair.indexOf("=");
+        if (eqIdx !== -1) {
+          if (!opts.env) opts.env = {};
+          opts.env[envPair.substring(0, eqIdx)] = envPair.substring(eqIdx + 1);
+        }
+        break;
+      }
+      case "--log":
+      case "--output":
+      case "-o":
+        opts.outFile = args[++i];
+        break;
+      case "--error":
+      case "-e":
+        opts.errorFile = args[++i];
+        break;
+      case "--merge-logs":
+        opts.mergeLogs = true;
+        break;
+      case "--log-date-format":
+        opts.logDateFormat = args[++i];
+        break;
+      case "--log-max-size":
+        opts.logMaxSize = args[++i];
+        break;
+      case "--log-retain":
+        opts.logRetain = parseInt(args[++i]!);
+        break;
+      case "--log-compress":
+        opts.logCompress = true;
+        break;
+      case "--port":
+      case "-p":
+        opts.port = parseInt(args[++i]!);
+        break;
+      case "--health-check-url":
+        opts.healthCheckUrl = args[++i];
+        break;
+      case "--health-check-interval":
+        opts.healthCheckInterval = parseInt(args[++i]!);
+        break;
+      case "--health-check-timeout":
+        opts.healthCheckTimeout = parseInt(args[++i]!);
+        break;
+      case "--health-check-max-fails":
+        opts.healthCheckMaxFails = parseInt(args[++i]!);
+        break;
+      case "--wait-ready":
+        opts.waitReady = true;
+        break;
+      case "--listen-timeout":
+        opts.listenTimeout = parseInt(args[++i]!);
+        break;
+      case "--namespace":
+        opts.namespace = args[++i];
+        break;
+      case "--source-map-support":
+        opts.sourceMapSupport = true;
+        break;
+      case "--":
+        // Everything after -- is passed as script args
+        positionalArgs.push(...args.slice(i + 1));
+        i = args.length;
+        break;
+      default:
+        if (!arg.startsWith("-")) {
+          positionalArgs.push(arg);
+        }
+        break;
+    }
+    i++;
+  }
+
+  if (positionalArgs.length > 0) {
+    opts.args = positionalArgs;
+  }
+
+  return opts;
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+async function cmdStart(args: string[]) {
+  
+  const scriptOrConfig = args[0];
+  
+  if (!scriptOrConfig) {
+    console.error(colorize("Usage: bm2 start <script|config> [options]", "red"));
+    process.exit(1);
+  }
+
+  const ext = extname(scriptOrConfig);
+
+  // Ecosystem file
+  if (
+    ext === ".json" ||
+    scriptOrConfig.includes("ecosystem") ||
+    scriptOrConfig.includes("bm2.config") || 
+    scriptOrConfig.includes("pm2.config")
+  ) {
+    const config = await loadEcosystemConfig(scriptOrConfig);
+    const res = await sendToDaemon({ type: "ecosystem", data: config });
+    if (!res.success) {
+      console.error(colorize(`Error: ${res.error}`, "red"));
+      process.exit(1);
+    }
+    printProcessTable(res.data);
+    return;
+  }
+
+  // Single script
+  const opts = parseStartFlags(args.slice(1), resolve(scriptOrConfig));
+  opts.script = resolve(scriptOrConfig);
+
+  const res = await sendToDaemon({ type: "start", data: opts });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdStop(args: string[]) {
+  const target = args[0] || "all";
+  const type = target === "all" ? "stopAll" : "stop";
+  const data = target === "all" ? undefined : { target };
+
+  const res = await sendToDaemon({ type, data });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdRestart(args: string[]) {
+  const target = args[0] || "all";
+  const type = target === "all" ? "restartAll" : "restart";
+  const data = target === "all" ? undefined : { target };
+
+  const res = await sendToDaemon({ type, data });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdReload(args: string[]) {
+  const target = args[0] || "all";
+  const type = target === "all" ? "reloadAll" : "reload";
+  const data = target === "all" ? undefined : { target };
+
+  const res = await sendToDaemon({ type, data });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdDelete(args: string[]) {
+  const target = args[0] || "all";
+  const type = target === "all" ? "deleteAll" : "delete";
+  const data = target === "all" ? undefined : { target };
+
+  const res = await sendToDaemon({ type, data });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process?.exit(1);
+  }
+  
+  console.log(colorize("✓ Deleted", "green"));
+  printProcessTable(res.data);
+}
+
+async function cmdList(args: string[]) {
+  const res = await sendToDaemon({ type: "list" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  
+  let liveMode = false;
+  
+  for (let arg of args) {
+    switch (arg) {
+      case "--live":
+        liveMode = true;
+        break;
+      default:
+    }
+  }
+  
+  if (liveMode) {
+    liveWatchProcess(res.data)
+  } else {
+    printProcessTable(res.data);
+  }
+}
+
+async function cmdDescribe(args: string[]) {
+  const target = args[0];
+  if (!target) {
+    console.error(colorize("Usage: bm2 describe <id|name>", "red"));
+    process.exit(1);
+  }
+
+  const res = await sendToDaemon({ type: "describe", data: { target } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+
+  const processes: ProcessState[] = res.data;
+  for (const p of processes) {
+    console.log(colorize(`\n─── ${p.name} (id: ${p.pm_id}) ───`, "bold"));
+    console.log(`  Status       : ${colorize(p.status, statusColor(p.status))}`);
+    console.log(`  PID          : ${p.pid || "N/A"}`);
+    console.log(`  Exec mode    : ${p.bm2_env.execMode}`);
+    console.log(`  Instances    : ${p.bm2_env.instances}`);
+    console.log(`  Namespace    : ${p.namespace || "default"}`);
+    console.log(`  Script       : ${p.bm2_env.script}`);
+    console.log(`  CWD          : ${p.bm2_env.cwd}`);
+    console.log(`  Args         : ${p.bm2_env.args.join(" ") || "(none)"}`);
+    console.log(`  Interpreter  : ${p.bm2_env.interpreter || "bun"}`);
+    console.log(`  Restarts     : ${p.bm2_env.restart_time}`);
+    console.log(`  Unstable     : ${p.bm2_env.unstable_restarts}`);
+    console.log(
+      `  Uptime       : ${
+        p.status === "online" ? formatUptime(Date.now() - p.bm2_env.pm_uptime) : "N/A"
+      }`
+    );
+    console.log(`  Created at   : ${new Date(p.bm2_env.created_at).toISOString()}`);
+    console.log(`  CPU          : ${p.monit.cpu.toFixed(1)}%`);
+    console.log(`  Memory       : ${formatBytes(p.monit.memory)}`);
+    if (p.monit.handles !== undefined)
+      console.log(`  Handles      : ${p.monit.handles}`);
+    if (p.monit.eventLoopLatency !== undefined)
+      console.log(`  EL Latency   : ${p.monit.eventLoopLatency.toFixed(2)} ms`);
+    console.log(`  Watch        : ${p.bm2_env.watch}`);
+    console.log(`  Autorestart  : ${p.bm2_env.autorestart}`);
+    console.log(`  Max restarts : ${p.bm2_env.maxRestarts}`);
+    console.log(`  Kill timeout : ${p.bm2_env.killTimeout} ms`);
+    if (p.bm2_env.healthCheckUrl)
+      console.log(`  Health URL   : ${p.bm2_env.healthCheckUrl}`);
+    if (p.bm2_env.cronRestart)
+      console.log(`  Cron restart : ${p.bm2_env.cronRestart}`);
+    if (p.bm2_env.port)
+      console.log(`  Port         : ${p.bm2_env.port}`);
+    console.log();
+  }
+}
+
+async function cmdLogs(args: string[]) {
+  const target = args[0] || "all";
+  let lines = 20;
+  const linesIdx = args.indexOf("--lines");
+  if (linesIdx !== -1 && args[linesIdx + 1]) {
+    lines = parseInt(args[linesIdx + 1]!);
+  }
+
+  const res = await sendToDaemon({ type: "logs", data: { target, lines } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+
+  for (const log of res.data) {
+    console.log(colorize(`\n─── ${log.name} (id: ${log.id}) ───`, "bold"));
+    if (log.out) {
+      console.log(colorize("--- stdout ---", "dim"));
+      console.log(log.out);
+    }
+    if (log.err) {
+      console.log(colorize("--- stderr ---", "red"));
+      console.log(log.err);
+    }
+  }
+}
+
+async function cmdFlush(args: string[]) {
+  const target = args[0];
+  const res = await sendToDaemon({ type: "flush", data: target ? { target } : undefined });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize("✓ Logs flushed", "green"));
+}
+
+async function cmdScale(args: string[]) {
+  const target = args[0];
+  const count = parseInt(args[1]!);
+  if (!target || isNaN(count)) {
+    console.error(colorize("Usage: bm2 scale <name|id> <count>", "red"));
+    process.exit(1);
+  }
+
+  const res = await sendToDaemon({ type: "scale", data: { target, count } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdSave() {
+  const res = await sendToDaemon({ type: "save" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize("✓ Process list saved", "green"));
+}
+
+async function cmdResurrect() {
+  const res = await sendToDaemon({ type: "resurrect" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  printProcessTable(res.data);
+}
+
+async function cmdSignal(args: string[]) {
+  const signal = args[0];
+  const target = args[1];
+  if (!signal || !target) {
+    console.error(colorize("Usage: bm2 sendSignal <signal> <id|name>", "red"));
+    process.exit(1);
+  }
+
+  const res = await sendToDaemon({ type: "signal", data: { target, signal } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize(`✓ Signal ${signal} sent to ${target}`, "green"));
+}
+
+async function cmdReset(args: string[]) {
+  const target = args[0] || "all";
+  const res = await sendToDaemon({ type: "reset", data: { target } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize("✓ Restart counters reset", "green"));
+  printProcessTable(res.data);
+}
+
+async function cmdMonit() {
+  const res = await sendToDaemon({ type: "metrics" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+
+  const snapshot = res.data;
+  console.log(colorize("\n⚡ BM2 Monitor\n", "bold"));
+
+  console.log(colorize("System:", "cyan"));
+  console.log(`  Platform : ${snapshot.system.platform}`);
+  console.log(`  CPUs     : ${snapshot.system.cpuCount}`);
+  console.log(`  Memory   : ${formatBytes(snapshot.system.totalMemory - snapshot.system.freeMemory)} / ${formatBytes(snapshot.system.totalMemory)}`);
+  console.log(`  Load avg : ${snapshot.system.loadAvg.map((l: number) => l.toFixed(2)).join(", ")}`);
+  console.log();
+
+  console.log(colorize("Processes:", "cyan"));
+  for (const p of snapshot.processes) {
+    const statusStr = colorize(padRight(p.status, 14), statusColor(p.status));
+    console.log(
+      `  ${padRight(String(p.id), 4)} ${padRight(p.name, 20)} ${statusStr} CPU: ${padRight(p.cpu.toFixed(1) + "%", 8)} MEM: ${padRight(formatBytes(p.memory), 10)} ↺ ${p.restarts}`
+    );
+  }
+  console.log();
+}
+
+async function cmdDashboard(args: string[]) {
+  let port = DASHBOARD_PORT;
+  let metricsPort = METRICS_PORT;
+
+  const portIdx = args.indexOf("--port");
+  if (portIdx !== -1 && args[portIdx + 1]) port = parseInt(args[portIdx + 1]!);
+  const mIdx = args.indexOf("--metrics-port");
+  if (mIdx !== -1 && args[mIdx + 1]) metricsPort = parseInt(args[mIdx + 1]!);
+
+  const res = await sendToDaemon({ type: "dashboard", data: { port, metricsPort } });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize(`✓ Dashboard running at http://localhost:${res.data.port}`, "green"));
+  console.log(colorize(`  Prometheus metrics at http://localhost:${res.data.metricsPort}/metrics`, "dim"));
+}
+
+async function cmdDashboardStop() {
+  const res = await sendToDaemon({ type: "dashboardStop" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(colorize("✓ Dashboard stopped", "green"));
+}
+
+async function cmdPing() {
+  try {
+    const res = await sendToDaemon({ type: "ping" });
+    if (res.success) {
+      console.log(colorize("✓ Daemon is alive", "green"));
+      console.log(`  PID    : ${res.data.pid}`);
+      console.log(`  Uptime : ${formatUptime(res.data.uptime * 1000)}`);
+    } else {
+      console.log(colorize("✗ Daemon responded with error", "red"));
+    }
+  } catch {
+    console.log(colorize("✗ Daemon is not running", "red"));
+  }
+}
+
+async function cmdKill() {
+  try {
+    await sendToDaemon({ type: "kill" });
+  } catch {
+    // Expected — daemon exits
+  }
+
+  // Clean up leftover files
+  try {
+    if (existsSync(DAEMON_SOCKET)) unlinkSync(DAEMON_SOCKET);
+  } catch {}
+  try {
+    if (existsSync(DAEMON_PID_FILE)) unlinkSync(DAEMON_PID_FILE);
+  } catch {}
+
+  console.log(colorize("✓ Daemon killed", "green"));
+}
+
+async function cmdDeploy(args: string[]) {
+  const configFile = args[0];
+  const environment = args[1];
+
+  if (!configFile || !environment) {
+    console.error(colorize("Usage: bm2 deploy <config> <environment> [setup]", "red"));
+    process.exit(1);
+  }
+
+  const config = await loadEcosystemConfig(configFile);
+  if (!config.deploy || !config.deploy[environment]) {
+    console.error(colorize(`Deploy environment "${environment}" not found in config`, "red"));
+    process.exit(1);
+  }
+
+  const deployConfig = config.deploy[environment]!;
+  const deployer = new DeployManager();
+
+  if (args[2] === "setup") {
+    await deployer.setup(deployConfig);
+  } else {
+    await deployer.deploy(deployConfig, args[2]);
+  }
+}
+
+async function cmdStartup(args: string[]) {
+  const startup = new StartupManager();
+
+  if (args[0] === "remove" || args[0] === "uninstall") {
+    const result = await startup.uninstall();
+    console.log(result);
+    return;
+  }
+
+  if (args[0] === "install") {
+    const result = await startup.install();
+    console.log(result);
+    return;
+  }
+
+  // Just print the config
+  const content = await startup.generate(args[0]);
+  console.log(content);
+}
+
+async function cmdEnv(args: string[]) {
+  const envMgr = new EnvManager();
+  const subCmd = args[0];
+
+  switch (subCmd) {
+    case "set": {
+      const name = args[1];
+      const key = args[2];
+      const value = args[3];
+      if (!name || !key || value === undefined) {
+        console.error(colorize("Usage: bm2 env set <name> <key> <value>", "red"));
+        process.exit(1);
+      }
+      await envMgr.setEnv(name, key, value);
+      console.log(colorize(`✓ Set ${key}=${value} for ${name}`, "green"));
+      break;
+    }
+    case "get": {
+      const name = args[1];
+      if (!name) {
+        console.error(colorize("Usage: bm2 env get <name>", "red"));
+        process.exit(1);
+      }
+      const env = await envMgr.getEnv(name);
+      for (const [k, v] of Object.entries(env)) {
+        console.log(`${colorize(k, "cyan")}=${v}`);
+      }
+      break;
+    }
+    case "delete":
+    case "rm": {
+      const name = args[1];
+      const key = args[2];
+      if (!name) {
+        console.error(colorize("Usage: bm2 env delete <name> [key]", "red"));
+        process.exit(1);
+      }
+      await envMgr.deleteEnv(name, key);
+      console.log(colorize(`✓ Deleted`, "green"));
+      break;
+    }
+    case "list": {
+      const all = await envMgr.getEnvs();
+      for (const [name, env] of Object.entries(all)) {
+        console.log(colorize(`\n${name}:`, "bold"));
+        for (const [k, v] of Object.entries(env)) {
+          console.log(`  ${colorize(k, "cyan")}=${v}`);
+        }
+      }
+      break;
+    }
+    default:
+      console.error(colorize("Usage: bm2 env <set|get|delete|list> ...", "red"));
+      process.exit(1);
+  }
+}
+
+async function cmdModule(args: string[]) {
+  const subCmd = args[0];
+
+  switch (subCmd) {
+    case "install": {
+      const mod = args[1];
+      if (!mod) {
+        console.error(colorize("Usage: bm2 module install <name|url|path>", "red"));
+        process.exit(1);
+      }
+      const res = await sendToDaemon({ type: "moduleInstall", data: { module: mod } });
+      if (!res.success) {
+        console.error(colorize(`Error: ${res.error}`, "red"));
+        process.exit(1);
+      }
+      console.log(colorize(`✓ Module installed at ${res.data.path}`, "green"));
+      break;
+    }
+    case "uninstall":
+    case "remove": {
+      const mod = args[1];
+      if (!mod) {
+        console.error(colorize("Usage: bm2 module uninstall <name>", "red"));
+        process.exit(1);
+      }
+      const res = await sendToDaemon({ type: "moduleUninstall", data: { module: mod } });
+      if (!res.success) {
+        console.error(colorize(`Error: ${res.error}`, "red"));
+        process.exit(1);
+      }
+      console.log(colorize("✓ Module uninstalled", "green"));
+      break;
+    }
+    case "list":
+    case "ls": {
+      const res = await sendToDaemon({ type: "moduleList" });
+      if (!res.success) {
+        console.error(colorize(`Error: ${res.error}`, "red"));
+        process.exit(1);
+      }
+      if (res.data.length === 0) {
+        console.log(colorize("No modules installed", "dim"));
+      } else {
+        for (const m of res.data) {
+          console.log(`  ${colorize(m.name, "cyan")} @ ${m.version}`);
+        }
+      }
+      break;
+    }
+    default:
+      console.error(colorize("Usage: bm2 module <install|uninstall|list> ...", "red"));
+      process.exit(1);
+  }
+}
+
+async function cmdDaemon(args: string[]) {
+  const subCmd = args[0];
+  let type;
+  
+  switch (subCmd) {
+    case "reload":
+      type = "daemonReload"
+      break;
+    default:
+      console.error(colorize("Usage: bm2 daemon <reload>", "red"));
+      process.exit(1);
+  }
+  
+  const res = await sendToDaemon({ type });
+    
+  if (res?.error) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  
+  console.log(colorize(res.data, "green"));
+  
+  process.exit(1);
+  
+}
+
+async function cmdPrometheus() {
+  const res = await sendToDaemon({ type: "prometheus" });
+  if (!res.success) {
+    console.error(colorize(`Error: ${res.error}`, "red"));
+    process.exit(1);
+  }
+  console.log(res.data);
+}
+
+// ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+function printHelp() {
+    console.log(`
+    ${colorize("BM2", "bold")} ${colorize(`v${VERSION}`, "dim")} — Bun Process Manager
+    
+    ${colorize("Usage:", "bold")} bm2 <command> [options]
+    
+    ${colorize("Process Management:", "cyan")}
+    start <script|config> [opts]  Start a process or ecosystem config
+    stop [id|name|all]            Stop process(es)
+    restart [id|name|all]         Restart process(es)
+    reload [id|name|all]          Graceful zero-downtime reload
+    delete [id|name|all]          Stop and remove process(es)
+    scale <id|name> <count>       Scale to N instances
+    list | ls | status            List all processes
+    describe <id|name>            Show detailed process info
+    reset <id|name|all>           Reset restart counters
+    
+    ${colorize("Logs:", "cyan")}
+    logs [id|name|all] [--lines N]  Show recent logs
+    flush [id|name]                 Clear log files
+    
+    ${colorize("Monitoring:", "cyan")}
+    monit                         Show live metrics snapshot
+    dashboard [--port N]          Start web dashboard
+    dashboard stop                Stop web dashboard
+    prometheus                    Print Prometheus metrics
+    
+    ${colorize("Persistence:", "cyan")}
+    save                          Save current process list
+    resurrect                     Restore saved process list
+    startup [install|remove]      Generate/install startup script
+    
+    ${colorize("Deploy:", "cyan")}
+    deploy <config> <env> [setup] Deploy using ecosystem config
+    
+    ${colorize("Environment:", "cyan")}
+    env set <name> <key> <val>    Set env variable
+    env get <name>                List env vars for a process
+    env delete <name> [key]       Delete env variable(s)
+    env list                      List all env registries
+    
+    ${colorize("Modules:", "cyan")}
+    module install <name|url>     Install a BM2 module
+    module uninstall <name>       Remove a module
+    module list                   List installed modules
+    
+    ${colorize("Daemon:", "cyan")}
+    daemon status                 Returns the status of the daemon
+    daemon start                  Starts the daemon
+    daemon start                  Stops the daemon
+    daemon reload                 Reloads the daemon
+    
+    ${colorize("Daemon:", "cyan")}
+    ping                          Check if daemon is alive
+    kill                          Kill the daemon and all processes
+    sendSignal <sig> <id|name>    Send OS signal to process
+    
+    ${colorize("Start Options:", "dim")}
+    --name, -n <name>             Process name
+    --instances, -i <N>           Number of instances (cluster)
+    --exec-mode, -x <mode>       fork or cluster
+    --watch, -w                   Watch for file changes
+    --cwd <path>                  Working directory
+    --interpreter <bin>           Custom interpreter
+    --node-args <args>            Extra runtime arguments
+    --max-memory-restart <size>   e.g. 200M, 1G
+    --max-restarts <N>            Max restart attempts
+    --cron, --cron-restart <expr> Cron-based restart schedule
+    --port, -p <port>             Base port for cluster
+    --env <KEY=VALUE>             Set environment variable
+    --no-autorestart              Disable auto-restart
+    --log, -o <file>              Custom stdout log path
+    --error, -e <file>            Custom stderr log path
+    --namespace <ns>              Namespace grouping
+    --wait-ready                  Wait for ready signal
+    --health-check-url <url>      HTTP health check endpoint
+    -- <args...>                  Pass arguments to script
+    
+    ${colorize("Examples:", "dim")}
+    bm2 start app.ts
+    bm2 start server.ts --name api -i 4 --watch
+    bm2 start ecosystem.config.ts
+    bm2 restart api
+    bm2 scale api 8
+    bm2 logs api --lines 100
+    bm2 monit
+    bm2 save && bm2 resurrect
+    `);
+    }
+    
+    // ---------------------------------------------------------------------------
+    // Main dispatch
+    // ---------------------------------------------------------------------------
+    
+    const args = process.argv.slice(2);
+    const command = args[0];
+    const commandArgs = args.slice(1);
+    
+    switch (command) {
+    case "start":
+        await cmdStart(commandArgs);
+        break;
+    case "stop":
+        await cmdStop(commandArgs);
+        break;
+    case "restart":
+        await cmdRestart(commandArgs);
+        break;
+    case "reload":
+        await cmdReload(commandArgs);
+        break;
+    case "delete":
+    case "del":
+    case "rm":
+        await cmdDelete(commandArgs);
+        break;
+    case "scale":
+        await cmdScale(commandArgs);
+        break;
+    case "list":
+    case "ls":
+    case "status":
+        await cmdList(commandArgs);
+        break;
+    case "describe":
+    case "show":
+    case "info":
+        await cmdDescribe(commandArgs);
+        break;
+    case "logs":
+    case "log":
+        await cmdLogs(commandArgs);
+        break;
+    case "flush":
+        await cmdFlush(commandArgs);
+        break;
+    case "monit":
+    case "monitor":
+        await cmdMonit();
+        break;
+    case "dashboard":
+        if (commandArgs[0] === "stop") {
+        await cmdDashboardStop();
+        } else {
+        await cmdDashboard(commandArgs);
+        }
+        break;
+    case "prometheus":
+        await cmdPrometheus();
+        break;
+    case "save":
+    case "dump":
+        await cmdSave();
+        break;
+    case "resurrect":
+    case "restore":
+        await cmdResurrect();
+        break;
+    case "reset":
+        await cmdReset(commandArgs);
+        break;
+    case "sendSignal":
+    case "signal":
+        await cmdSignal(commandArgs);
+        break;
+    case "ping":
+        await cmdPing();
+        break;
+    case "kill":
+        await cmdKill();
+        break;
+    case "deploy":
+        await cmdDeploy(commandArgs);
+        break;
+    case "startup":
+        await cmdStartup(commandArgs);
+        break;
+    case "env":
+        await cmdEnv(commandArgs);
+        break;
+    case "module":
+        await cmdModule(commandArgs);
+        break;
+    case "daemon":
+        await cmdDaemon(commandArgs);
+        break;
+    case "version":
+    case "-v":
+    case "--version":
+        console.log(`${APP_NAME} v${VERSION}`);
+        break;
+    case "help":
+    case "-h":
+    case "--help":
+    case undefined:
+        printHelp();
+        break;
+    default:
+        console.error(colorize(`Unknown command: ${command}`, "red"));
+        console.error(`Run ${colorize("bm2 --help", "cyan")} for usage information.`);
+        process.exit(1);
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+import { join, dirname } from "path";
+import { existsSync, readdirSync, unlinkSync, renameSync, statSync } from "fs";
+import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
+import type { LogRotateOptions } from "./types";
+
+export class LogManager {
+  private writeBuffers: Map<string, string[]> = new Map();
+  private flushTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  getLogPaths(name: string, id: number, customOut?: string, customErr?: string) {
+    return {
+      outFile: customOut || join(LOG_DIR, `${name}-${id}-out.log`),
+      errFile: customErr || join(LOG_DIR, `${name}-${id}-error.log`),
+    };
+  }
+
+  async appendLog(filePath: string, data: string | Uint8Array) {
+    const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+
+    // Buffer writes for performance
+    if (!this.writeBuffers.has(filePath)) {
+      this.writeBuffers.set(filePath, []);
+    }
+    this.writeBuffers.get(filePath)!.push(text);
+
+    // Debounced flush
+    if (!this.flushTimers.has(filePath)) {
+      this.flushTimers.set(filePath, setTimeout(() => {
+        this.flushBuffer(filePath);
+      }, 100));
+    }
+  }
+
+  private async flushBuffer(filePath: string) {
+    const buffer = this.writeBuffers.get(filePath);
+    if (!buffer || buffer.length === 0) return;
+
+    const content = buffer.join("");
+    this.writeBuffers.set(filePath, []);
+    this.flushTimers.delete(filePath);
+
+    try {
+      const file = Bun.file(filePath);
+      const existing = (await file.exists()) ? await file.text() : "";
+      await Bun.write(filePath, existing + content);
+    } catch (err) {
+      // If file too large, log the error
+      console.error(`[bm2] Failed to write log: ${filePath}`, err);
+    }
+  }
+
+  async forceFlush() {
+    for (const [filePath] of this.writeBuffers) {
+      await this.flushBuffer(filePath);
+    }
+  }
+
+  async readLogs(
+    name: string,
+    id: number,
+    lines: number = 20,
+    customOut?: string,
+    customErr?: string
+  ): Promise<{ out: string; err: string }> {
+    const paths = this.getLogPaths(name, id, customOut, customErr);
+    let out = "";
+    let err = "";
+
+    try {
+      const outFile = Bun.file(paths.outFile);
+      if (await outFile.exists()) {
+        const text = await outFile.text();
+        out = text.split("\n").slice(-lines).join("\n");
+      }
+    } catch {}
+
+    try {
+      const errFile = Bun.file(paths.errFile);
+      if (await errFile.exists()) {
+        const text = await errFile.text();
+        err = text.split("\n").slice(-lines).join("\n");
+      }
+    } catch {}
+
+    return { out, err };
+  }
+
+  async tailLog(
+    filePath: string,
+    callback: (line: string) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    let lastSize = 0;
+    const file = Bun.file(filePath);
+    if (await file.exists()) {
+      lastSize = file.size;
+    }
+
+    const interval = setInterval(async () => {
+      if (signal?.aborted) {
+        clearInterval(interval);
+        return;
+      }
+      try {
+        const f = Bun.file(filePath);
+        if (!(await f.exists())) return;
+        const currentSize = f.size;
+        if (currentSize > lastSize) {
+          const text = await f.text();
+          const newContent = text.substring(lastSize);
+          lastSize = currentSize;
+          for (const line of newContent.split("\n").filter(Boolean)) {
+            callback(line);
+          }
+        }
+      } catch {}
+    }, 500);
+  }
+
+  async rotate(filePath: string, options: LogRotateOptions): Promise<void> {
+    try {
+      const file = Bun.file(filePath);
+      if (!(await file.exists())) return;
+
+      const stat = statSync(filePath);
+      if (stat.size < options.maxSize) return;
+
+      // Rotate files
+      for (let i = options.retain - 1; i >= 1; i--) {
+        const src = i === 1 ? filePath : `${filePath}.${i - 1}`;
+        const dst = `${filePath}.${i}`;
+        if (existsSync(src)) {
+          renameSync(src, dst);
+
+          if (options.compress && i > 0) {
+            // Compress rotated file using Bun's gzip
+            try {
+              const content = await Bun.file(dst).arrayBuffer();
+              const compressed = Bun.gzipSync(new Uint8Array(content));
+              await Bun.write(`${dst}.gz`, compressed);
+              unlinkSync(dst);
+            } catch {}
+          }
+        }
+      }
+
+      // Clean excess rotated files
+      const dir = dirname(filePath);
+      const baseName = filePath.split("/").pop()!;
+      try {
+        const files = readdirSync(dir);
+        const rotated = files
+          .filter((f) => f.startsWith(baseName + "."))
+          .sort()
+          .reverse();
+        for (let i = options.retain; i < rotated.length; i++) {
+          unlinkSync(join(dir, rotated[i]!));
+        }
+      } catch {}
+
+      // Truncate original
+      await Bun.write(filePath, "");
+    } catch (err) {
+      console.error(`[bm2] Log rotation failed for ${filePath}:`, err);
+    }
+  }
+
+  async flush(name: string, id: number, customOut?: string, customErr?: string) {
+    const paths = this.getLogPaths(name, id, customOut, customErr);
+    try { await Bun.write(paths.outFile, ""); } catch {}
+    try { await Bun.write(paths.errFile, ""); } catch {}
+  }
+
+  async checkRotation(
+    name: string,
+    id: number,
+    options: LogRotateOptions,
+    customOut?: string,
+    customErr?: string
+  ) {
+    const paths = this.getLogPaths(name, id, customOut, customErr);
+    await this.rotate(paths.outFile, options);
+    await this.rotate(paths.errFile, options);
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+ import { join } from "path";
+ import { MODULE_DIR } from "./constants";
+ import { existsSync, readdirSync } from "fs";
+ import type { ProcessManager } from "./process-manager";
+ 
+ export interface BM2Module {
+   name: string;
+   version: string;
+   init(pm: ProcessManager): void | Promise<void>;
+   destroy?(): void | Promise<void>;
+ }
+ 
+ export class ModuleManager {
+   private modules: Map<string, BM2Module> = new Map();
+   private pm: ProcessManager;
+ 
+   constructor(pm: ProcessManager) {
+     this.pm = pm;
+   }
+ 
+   async install(moduleNameOrPath: string): Promise<string> {
+     const targetDir = join(MODULE_DIR, moduleNameOrPath.replace(/[^a-zA-Z0-9_-]/g, "_"));
+ 
+     if (moduleNameOrPath.startsWith("http") || moduleNameOrPath.startsWith("git")) {
+       // Clone from git
+       const proc = Bun.spawn(["git", "clone", moduleNameOrPath, targetDir], {
+         stdout: "pipe", stderr: "pipe",
+       });
+       await proc.exited;
+     } else if (moduleNameOrPath.startsWith("/") || moduleNameOrPath.startsWith(".")) {
+       // Local path - symlink
+       const { symlinkSync } = require("fs");
+       symlinkSync(moduleNameOrPath, targetDir);
+     } else {
+       // npm package
+       const proc = Bun.spawn(["bun", "add", moduleNameOrPath], {
+         cwd: MODULE_DIR,
+         stdout: "pipe", stderr: "pipe",
+       });
+       await proc.exited;
+     }
+ 
+     // Install deps
+     if (existsSync(join(targetDir, "package.json"))) {
+       const proc = Bun.spawn(["bun", "install"], {
+         cwd: targetDir,
+         stdout: "pipe", stderr: "pipe",
+       });
+       await proc.exited;
+     }
+ 
+     // Load
+     await this.load(targetDir);
+     return targetDir;
+   }
+ 
+   async load(modulePath: string): Promise<void> {
+     try {
+       const pkg = await Bun.file(join(modulePath, "package.json")).json();
+       const main = pkg.main || pkg.module || "index.ts";
+       const mod: BM2Module = (await import(join(modulePath, main))).default;
+ 
+       if (!mod.name) mod.name = pkg.name;
+       if (!mod.version) mod.version = pkg.version;
+ 
+       await mod.init(this.pm);
+       this.modules.set(mod.name, mod);
+       console.log(`[bm2] Module loaded: ${mod.name}@${mod.version}`);
+     } catch (err: any) {
+       console.error(`[bm2] Failed to load module ${modulePath}:`, err.message);
+     }
+   }
+ 
+   async uninstall(name: string): Promise<void> {
+     const mod = this.modules.get(name);
+     if (mod?.destroy) await mod.destroy();
+     this.modules.delete(name);
+ 
+     const modPath = join(MODULE_DIR, name);
+     if (existsSync(modPath)) {
+       const { rmSync } = require("fs");
+       rmSync(modPath, { recursive: true, force: true });
+     }
+   }
+ 
+   async loadAll(): Promise<void> {
+     if (!existsSync(MODULE_DIR)) return;
+     const entries = readdirSync(MODULE_DIR);
+     for (const entry of entries) {
+       const modPath = join(MODULE_DIR, entry);
+       if (existsSync(join(modPath, "package.json"))) {
+         await this.load(modPath);
+       }
+     }
+   }
+ 
+   list(): Array<{ name: string; version: string }> {
+     return Array.from(this.modules.values()).map((m) => ({
+       name: m.name,
+       version: m.version,
+     }));
+   }
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+import type { MetricSnapshot, ProcessState } from "./types";
+import { getSystemInfo } from "./utils";
+import { METRICS_DIR } from "./constants";
+import { join } from "path";
+
+export class Monitor {
+  private history: MetricSnapshot[] = [];
+  private maxHistory = 3600; // 1 hour at 1s intervals
+
+  async collectProcessMetrics(
+    pid: number
+  ): Promise<{ memory: number; cpu: number; handles?: number }> {
+    try {
+      if (process.platform === "linux") {
+        const statusFile = Bun.file(`/proc/${pid}/status`);
+        const statFile = Bun.file(`/proc/${pid}/stat`);
+
+        let memory = 0;
+        let cpu = 0;
+        let handles: number | undefined;
+
+        if (await statusFile.exists()) {
+          const content = await statusFile.text();
+          const vmRss = content.match(/VmRSS:\s+(\d+)\s+kB/);
+          
+          if (vmRss) memory = parseInt(vmRss[1]!) * 1024;
+         
+          // Count file descriptors
+          try {
+            const { readdirSync } = require("fs");
+            const fds = readdirSync(`/proc/${pid}/fd`);
+            handles = fds.length;
+          } catch {}
+        }
+
+        if (await statFile.exists()) {
+          const stat = await statFile.text();
+          const parts = stat.split(" ");
+          
+          const utime = parseInt(parts[13]!) || 0;
+          const stime = parseInt(parts[14]!) || 0;
+          
+          // Simplified CPU calculation
+          cpu = (utime + stime) / 100;
+        }
+
+        return { memory, cpu, handles };
+      } else {
+        // macOS / fallback
+        const ps = Bun.spawn(
+          ["ps", "-o", "rss=,pcpu=", "-p", String(pid)],
+          { stdout: "pipe", stderr: "pipe" }
+        );
+        const output = await new Response(ps.stdout).text();
+        const parts = output.trim().split(/\s+/);
+        
+        if (parts.length >= 2) {
+          return {
+            memory: parseInt(parts[0]!) * 1024,
+            cpu: parseFloat(parts[1]!),
+          };
+        }
+      }
+    } catch {}
+
+    return { memory: 0, cpu: 0 };
+  }
+
+  async takeSnapshot(processes: ProcessState[]): Promise<MetricSnapshot> {
+    const system = getSystemInfo();
+    const snapshot: MetricSnapshot = {
+      timestamp: Date.now(),
+      processes: processes.map((p) => ({
+        id: p.id,
+        name: p.name,
+        pid: p.pid,
+        cpu: p.monit.cpu,
+        memory: p.monit.memory,
+        eventLoopLatency: p.monit.eventLoopLatency,
+        handles: p.monit.handles,
+        status: p.status,
+        restarts: p.bm2_env.restart_time,
+        uptime: p.bm2_env.status === "online" ? Date.now() - p.bm2_env.pm_uptime : 0,
+      })),
+      system: {
+        totalMemory: system.totalMemory,
+        freeMemory: system.freeMemory,
+        cpuCount: system.cpuCount,
+        loadAvg: system.loadAvg,
+        platform: system.platform,
+      },
+    };
+
+    this.history.push(snapshot);
+    if (this.history.length > this.maxHistory) {
+      this.history = this.history.slice(-this.maxHistory);
+    }
+
+    return snapshot;
+  }
+
+  getHistory(seconds: number = 300): MetricSnapshot[] {
+    const cutoff = Date.now() - seconds * 1000;
+    return this.history.filter((s) => s.timestamp >= cutoff);
+  }
+
+  getLatest(): MetricSnapshot | null {
+    return this.history.length > 0 ? this.history[this.history.length - 1]! : null;
+  }
+
+  async saveMetrics(): Promise<void> {
+    const filePath = join(METRICS_DIR, `metrics-${Date.now()}.json`);
+    await Bun.write(filePath, JSON.stringify(this.history.slice(-300)));
+  }
+
+  generatePrometheusMetrics(processes: ProcessState[]): string {
+    const lines: string[] = [];
+
+    lines.push("# HELP bm2_process_cpu CPU usage percentage");
+    lines.push("# TYPE bm2_process_cpu gauge");
+    for (const p of processes) {
+      lines.push(`bm2_process_cpu{name="${p.name}",id="${p.pm_id}"} ${p.monit.cpu}`);
+    }
+
+    lines.push("# HELP bm2_process_memory_bytes Memory usage in bytes");
+    lines.push("# TYPE bm2_process_memory_bytes gauge");
+    for (const p of processes) {
+      lines.push(`bm2_process_memory_bytes{name="${p.name}",id="${p.pm_id}"} ${p.monit.memory}`);
+    }
+
+    lines.push("# HELP bm2_process_restarts_total Total restart count");
+    lines.push("# TYPE bm2_process_restarts_total counter");
+    for (const p of processes) {
+      lines.push(`bm2_process_restarts_total{name="${p.name}",id="${p.pm_id}"} ${p.bm2_env.restart_time}`);
+    }
+
+    lines.push("# HELP bm2_process_uptime_seconds Process uptime in seconds");
+    lines.push("# TYPE bm2_process_uptime_seconds gauge");
+    for (const p of processes) {
+      const uptime = p.bm2_env.status === "online"
+        ? (Date.now() - p.bm2_env.pm_uptime) / 1000
+        : 0;
+      lines.push(`bm2_process_uptime_seconds{name="${p.name}",id="${p.pm_id}"} ${uptime.toFixed(0)}`);
+    }
+
+    lines.push("# HELP bm2_process_status Process status (1=online)");
+    lines.push("# TYPE bm2_process_status gauge");
+    for (const p of processes) {
+      lines.push(`bm2_process_status{name="${p.name}",id="${p.pm_id}",status="${p.status}"} ${p.status === "online" ? 1 : 0}`);
+    }
+
+    const sys = getSystemInfo();
+    lines.push("# HELP bm2_system_memory_total_bytes Total system memory");
+    lines.push("# TYPE bm2_system_memory_total_bytes gauge");
+    lines.push(`bm2_system_memory_total_bytes ${sys.totalMemory}`);
+
+    lines.push("# HELP bm2_system_memory_free_bytes Free system memory");
+    lines.push("# TYPE bm2_system_memory_free_bytes gauge");
+    lines.push(`bm2_system_memory_free_bytes ${sys.freeMemory}`);
+
+    lines.push("# HELP bm2_system_load_average System load average");
+    lines.push("# TYPE bm2_system_load_average gauge");
+    lines.push(`bm2_system_load_average{period="1m"} ${sys.loadAvg[0]}`);
+    lines.push(`bm2_system_load_average{period="5m"} ${sys.loadAvg[1]}`);
+    lines.push(`bm2_system_load_average{period="15m"} ${sys.loadAvg[2]}`);
+
+    return lines.join("\n") + "\n";
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+import type { Subprocess } from "bun";
+import type {
+  ProcessDescription,
+  ProcessState,
+  ProcessStatus,
+  LogRotateOptions,
+} from "./types";
+import { LogManager } from "./log-manager";
+import { ClusterManager } from "./cluster-manager";
+import { HealthChecker } from "./health-checker";
+import { CronManager } from "./cron-manager";
+import { treeKill } from "./utils";
+import { join } from "path";
+import {
+  PID_DIR,
+  MONITOR_INTERVAL,
+  DEFAULT_LOG_MAX_SIZE,
+  DEFAULT_LOG_RETAIN,
+} from "./constants";
+
+export class ProcessContainer {
+  public id: number;
+  public name: string;
+  public config: ProcessDescription;
+  public status: ProcessStatus = "stopped";
+  public process: Subprocess | null = null;
+  public pid: number | undefined;
+  public restartCount: number = 0;
+  public unstableRestarts: number = 0;
+  public createdAt: number;
+  public startedAt: number = 0;
+  public memory: number = 0;
+  public cpu: number = 0;
+  public handles: number = 0;
+  public eventLoopLatency: number = 0;
+  public axmMonitor: Record<string, any> = {};
+
+  private logManager: LogManager;
+  private clusterManager: ClusterManager;
+  private healthChecker: HealthChecker;
+  private cronManager: CronManager;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private watcher: ReturnType<typeof import("fs").watch> | null = null;
+  private monitorInterval: ReturnType<typeof setInterval> | null = null;
+  private logRotateInterval: ReturnType<typeof setInterval> | null = null;
+  private isRestarting: boolean = false;
+
+  constructor(
+    id: number,
+    config: ProcessDescription,
+    logManager: LogManager,
+    clusterManager: ClusterManager,
+    healthChecker: HealthChecker,
+    cronManager: CronManager
+  ) {
+    this.id = id;
+    this.name = config.name;
+    this.config = config;
+    this.logManager = logManager;
+    this.clusterManager = clusterManager;
+    this.healthChecker = healthChecker;
+    this.cronManager = cronManager;
+    this.createdAt = Date.now();
+  }
+
+  async start(): Promise<void> {
+    if (this.status === "online") return;
+
+    this.status = "launching";
+    const logPaths = this.logManager.getLogPaths(
+      this.name,
+      this.id,
+      this.config.outFile,
+      this.config.errorFile
+    );
+
+    try {
+      // Ensure log files exist
+      for (const f of [logPaths.outFile, logPaths.errFile]) {
+        const file = Bun.file(f);
+        if (!(await file.exists())) await Bun.write(f, "");
+      }
+
+      if (this.config.execMode === "cluster" && this.config.instances > 1) {
+        await this.startCluster(logPaths);
+      } else {
+        await this.startFork(logPaths);
+      }
+
+      this.startedAt = Date.now();
+      this.status = "online";
+
+      // Write PID file
+      if (this.pid) {
+        await Bun.write(
+          join(PID_DIR, `${this.name}-${this.id}.pid`),
+          String(this.pid)
+        );
+      }
+
+      // Start monitoring
+      this.startMonitoring();
+
+      // Start log rotation
+      this.startLogRotation(logPaths);
+
+      // Setup watch mode
+      if (this.config.watch) {
+        this.setupWatch();
+      }
+
+      // Setup health checks
+      if (this.config.healthCheckUrl) {
+        this.healthChecker.startCheck(
+          this.id,
+          {
+            url: this.config.healthCheckUrl,
+            interval: this.config.healthCheckInterval || 30000,
+            timeout: this.config.healthCheckTimeout || 5000,
+            maxFails: this.config.healthCheckMaxFails || 3,
+          },
+          (_id, reason) => {
+            console.log(`[bm2] Health check failed for ${this.name}: ${reason}`);
+            this.restart();
+          }
+        );
+      }
+
+      // Setup cron restart
+      if (this.config.cronRestart) {
+        this.cronManager.schedule(this.id, this.config.cronRestart, () => {
+          console.log(`[bm2] Cron restart triggered for ${this.name}`);
+          this.restart();
+        });
+      }
+    } catch (err: any) {
+      this.status = "errored";
+      const timestamp = new Date().toISOString();
+      await this.logManager.appendLog(
+        logPaths.errFile,
+        `[${timestamp}] [bm2] Failed to start: ${err.message}\n`
+      );
+      throw err;
+    }
+  }
+
+  private async startFork(logPaths: { outFile: string; errFile: string }) {
+    const cmd = this.clusterManager.buildWorkerCommand(this.config);
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...this.config.env,
+      BM2_ID: String(this.id),
+      BM2_NAME: this.name,
+      BM2_EXEC_MODE: "fork",
+    };
+
+    this.process = Bun.spawn(cmd, {
+      cwd: this.config.cwd || process.cwd(),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    this.pid = this.process.pid;
+    this.pipeOutput(logPaths);
+
+    this.process.exited.then((code) => {
+      if (!this.isRestarting) {
+        this.handleExit(code);
+      }
+    });
+  }
+
+  private async startCluster(logPaths: { outFile: string; errFile: string }) {
+    const proc = this.clusterManager.spawnWorker(
+      this.config,
+      0,
+      this.config.instances,
+      { stdout: "pipe", stderr: "pipe" }
+    );
+
+    this.process = proc;
+    this.pid = proc.pid;
+
+    if (proc.stdout && typeof proc.stdout !== "number") {
+      this.pipeStream(proc.stdout, logPaths.outFile);
+    }
+    if (proc.stderr && typeof proc.stderr !== "number") {
+      this.pipeStream(proc.stderr, logPaths.errFile);
+    }
+
+    proc.exited.then((code) => {
+      if (!this.isRestarting) {
+        this.handleExit(code);
+      }
+    });
+  }
+
+  private pipeOutput(logPaths: { outFile: string; errFile: string }) {
+    if (!this.process) return;
+    if (this.process.stdout && typeof this.process.stdout !== "number") {
+      this.pipeStream(this.process.stdout, logPaths.outFile);
+    }
+    if (this.process.stderr && typeof this.process.stderr !== "number") {
+      this.pipeStream(this.process.stderr, logPaths.errFile);
+    }
+  }
+
+  private async pipeStream(stream: ReadableStream<Uint8Array>, filePath: string) {
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = new TextDecoder().decode(value);
+        const timestamp = new Date().toISOString();
+        const lines = text.split("\n").filter(Boolean);
+        for (const line of lines) {
+          await this.logManager.appendLog(filePath, `[${timestamp}] ${line}\n`);
+        }
+      }
+    } catch {}
+  }
+
+  private startMonitoring() {
+    this.monitorInterval = setInterval(async () => {
+      if (!this.pid || this.status !== "online") return;
+
+      try {
+        if (process.platform === "linux") {
+          const statusFile = Bun.file(`/proc/${this.pid}/status`);
+          if (await statusFile.exists()) {
+            const content = await statusFile.text();
+            const vmRss = content.match(/VmRSS:\s+(\d+)\s+kB/);
+            if (vmRss) this.memory = parseInt(vmRss[1]!) * 1024;
+          }
+
+          try {
+            const { readdirSync } = require("fs");
+            this.handles = readdirSync(`/proc/${this.pid}/fd`).length;
+          } catch {}
+        } else {
+          const ps = Bun.spawn(["ps", "-o", "rss=,pcpu=", "-p", String(this.pid)], {
+            stdout: "pipe", stderr: "pipe",
+          });
+          const output = await new Response(ps.stdout).text();
+          const parts = output.trim().split(/\s+/);
+          if (parts.length >= 2) {
+            this.memory = parseInt(parts[0]!) * 1024;
+            this.cpu = parseFloat(parts[1]!);
+          }
+        }
+
+        // Max memory restart
+        if (this.config.maxMemoryRestart && this.memory > this.config.maxMemoryRestart) {
+          console.log(`[bm2] ${this.name} exceeded memory limit (${this.memory} > ${this.config.maxMemoryRestart}), restarting...`);
+          await this.restart();
+        }
+      } catch {}
+    }, MONITOR_INTERVAL);
+  }
+
+  private startLogRotation(logPaths: { outFile: string; errFile: string }) {
+    const rotateOpts: LogRotateOptions = {
+      maxSize: this.config.logMaxSize || DEFAULT_LOG_MAX_SIZE,
+      retain: this.config.logRetain || DEFAULT_LOG_RETAIN,
+      compress: this.config.logCompress || false,
+    };
+
+    this.logRotateInterval = setInterval(() => {
+      this.logManager.checkRotation(
+        this.name,
+        this.id,
+        rotateOpts,
+        this.config.outFile,
+        this.config.errorFile
+      );
+    }, 60000);
+  }
+
+  private setupWatch() {
+    const { watch } = require("fs");
+    const paths = this.config.watchPaths || [this.config.cwd || process.cwd()];
+    const ignorePatterns = this.config.ignoreWatch || ["node_modules", ".git", ".bm2"];
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    for (const watchPath of paths) {
+      try {
+        this.watcher = watch(
+          watchPath,
+          { recursive: true },
+          (_event: string, filename: string | null) => {
+            if (!filename) return;
+            if (ignorePatterns.some((p) => filename.includes(p))) return;
+
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              console.log(`[bm2] ${filename} changed, restarting ${this.name}...`);
+              this.restart();
+            }, 1000);
+          }
+        );
+      } catch {}
+    }
+  }
+
+  private handleExit(code: number | null) {
+    const wasOnline = this.status === "online";
+    this.status = code === 0 ? "stopped" : "errored";
+    this.pid = undefined;
+    this.process = null;
+
+    this.cleanupTimers();
+
+    const uptime = Date.now() - this.startedAt;
+
+    if (wasOnline && this.config.autorestart && this.restartCount < this.config.maxRestarts) {
+      if (uptime < this.config.minUptime) {
+        this.unstableRestarts++;
+      }
+
+      this.status = "waiting-restart";
+      const delay = this.config.restartDelay || 0;
+
+      this.restartTimer = setTimeout(() => {
+        this.restartCount++;
+        console.log(`[bm2] Restarting ${this.name} (attempt ${this.restartCount}/${this.config.maxRestarts})`);
+        this.start().catch((err) => {
+          console.error(`[bm2] Failed to restart ${this.name}:`, err);
+        });
+      }, delay);
+    } else if (this.restartCount >= this.config.maxRestarts) {
+      console.log(`[bm2] ${this.name} reached max restarts (${this.config.maxRestarts}), not restarting`);
+      this.status = "errored";
+    }
+  }
+
+  private cleanupTimers() {
+    if (this.monitorInterval) {
+      clearInterval(this.monitorInterval);
+      this.monitorInterval = null;
+    }
+    if (this.logRotateInterval) {
+      clearInterval(this.logRotateInterval);
+      this.logRotateInterval = null;
+    }
+    this.healthChecker.stopCheck(this.id);
+    this.cronManager.cancel(this.id);
+  }
+
+  async stop(force: boolean = false): Promise<void> {
+    if (this.status !== "online" && this.status !== "launching" && this.status !== "waiting-restart") {
+      return;
+    }
+
+    this.isRestarting = false;
+    this.status = "stopping";
+    this.config.autorestart = false;
+
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+
+    this.cleanupTimers();
+
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+
+    if (this.process && this.pid) {
+      if (this.config.treekill !== false) {
+        await treeKill(this.pid, "SIGTERM");
+      } else {
+        this.process.kill("SIGTERM" as any);
+      }
+
+      if (!force) {
+        const timeout = this.config.killTimeout || 5000;
+        const exited = await Promise.race([
+          this?.process?.exited.then(() => true),
+          new Promise<boolean>((r) => setTimeout(() => r(false), timeout)),
+        ]);
+
+        if (!exited && this.process) {
+          if (this.config.treekill !== false && this.pid) {
+            await treeKill(this.pid, "SIGKILL");
+          } else {
+            this.process.kill("SIGKILL" as any);
+          }
+          await this?.process?.exited;
+        }
+      } else {
+        if (this.config.treekill !== false && this.pid) {
+          await treeKill(this.pid, "SIGKILL");
+        } else {
+          this.process.kill("SIGKILL" as any);
+        }
+        await this?.process?.exited;
+      }
+    }
+
+    // Clean up cluster workers
+    this.clusterManager.removeAllWorkers(this.id);
+
+    this.status = "stopped";
+    this.pid = undefined;
+    this.process = null;
+    this.memory = 0;
+    this.cpu = 0;
+  }
+
+  async restart(): Promise<void> {
+    this.isRestarting = true;
+    const wasAutoRestart = this.config.autorestart;
+    await this.stop();
+    this.config.autorestart = wasAutoRestart;
+    this.isRestarting = false;
+    await this.start();
+  }
+
+  async reload(): Promise<void> {
+    const oldPid = this.pid;
+    const oldProcess = this.process;
+
+    this.isRestarting = true;
+    this.process = null;
+    this.pid = undefined;
+
+    await this.start();
+
+    // Wait for new process to be stable
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // Kill old process
+    if (oldProcess && oldPid) {
+      try {
+        if (this.config.treekill !== false) {
+          await treeKill(oldPid, "SIGTERM");
+        } else {
+          oldProcess.kill("SIGTERM" as any);
+        }
+      } catch {}
+    }
+
+    this.isRestarting = false;
+  }
+
+  async sendSignal(signal: string): Promise<void> {
+    if (this.pid) {
+      process.kill(this.pid, signal as any);
+    }
+  }
+
+  getState(): ProcessState {
+    return {
+      id: this.id,
+      name: this.name,
+      namespace: this.config.namespace,
+      status: this.status,
+      pid: this.pid,
+      pm_id: this.id,
+      monit: {
+        memory: this.memory,
+        cpu: this.cpu,
+        handles: this.handles,
+        eventLoopLatency: this.eventLoopLatency,
+      },
+      bm2_env: {
+        ...this.config,
+        status: this.status,
+        pm_uptime: this.startedAt,
+        restart_time: this.restartCount,
+        unstable_restarts: this.unstableRestarts,
+        created_at: this.createdAt,
+        pm_id: this.id,
+        axm_monitor: this.axmMonitor,
+      },
+    };
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      name: this.name,
+      config: this.config,
+      restartCount: this.restartCount,
+    };
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ import type {
+   ProcessDescription,
+   ProcessState,
+   StartOptions,
+   EcosystemConfig,
+   MetricSnapshot,
+ } from "./types";
+ import { ProcessContainer } from "./process-container";
+ import { LogManager } from "./log-manager";
+ import { ClusterManager } from "./cluster-manager";
+ import { HealthChecker } from "./health-checker";
+ import { CronManager } from "./cron-manager";
+ import { Monitor } from "./monitor";
+ import { GracefulReload } from "./graceful-reload";
+ import { parseMemory, DUMP_FILE } from "./utils";
+ import {
+   DEFAULT_KILL_TIMEOUT,
+   DEFAULT_MAX_RESTARTS,
+   DEFAULT_MIN_UPTIME,
+   DEFAULT_RESTART_DELAY,
+   DEFAULT_LOG_MAX_SIZE,
+   DEFAULT_LOG_RETAIN,
+ } from "./constants";
+ 
+ export class ProcessManager {
+   private processes: Map<number, ProcessContainer> = new Map();
+   private nextId: number = 0;
+   public logManager: LogManager;
+   public clusterManager: ClusterManager;
+   public healthChecker: HealthChecker;
+   public cronManager: CronManager;
+   public monitor: Monitor;
+   public gracefulReload: GracefulReload;
+ 
+   constructor() {
+     this.logManager = new LogManager();
+     this.clusterManager = new ClusterManager();
+     this.healthChecker = new HealthChecker();
+     this.cronManager = new CronManager();
+     this.monitor = new Monitor();
+     this.gracefulReload = new GracefulReload();
+   }
+ 
+  async start(options: StartOptions): Promise<ProcessState[]> {
+        
+    const resolvedInstances = this.clusterManager.resolveInstances(options.instances);
+    const isCluster = options.execMode === "cluster" || resolvedInstances > 1;
+    const states: ProcessState[] = [];
+
+    if (isCluster) {
+      // In cluster mode, each instance is a separate container
+      for (let i = 0; i < resolvedInstances; i++) {
+          
+        const id = this.nextId++;
+        const baseName = options.name || options.script.split("/").pop()?.replace(/\.\w+$/, "") || `app-${id}`;
+        const name = resolvedInstances > 1 ? `${baseName}-${i}` : baseName;
+
+        const config = this.buildConfig(id, name, options, resolvedInstances, i);
+        
+        const container = new ProcessContainer(
+          id, config, this.logManager, this.clusterManager,
+          this.healthChecker, this.cronManager
+        );
+
+        this.processes.set(id, container);
+        await container.start();
+        states.push(container.getState());
+      }
+    } else {
+      const id = this.nextId++;
+      const name =
+          options.name ||
+          options.script.split("/").pop()?.replace(/\.\w+$/, "") ||
+          `app-${id}`;
+  
+      const config = this.buildConfig(id, name, options, 1, 0);
+      const container = new ProcessContainer(
+          id, config, this.logManager, this.clusterManager,
+          this.healthChecker, this.cronManager
+      );
+  
+      this.processes.set(id, container);
+      await container.start();
+      states.push(container.getState());
+    }
+
+    return states;
+   }
+ 
+   private buildConfig(
+     id: number,
+     name: string,
+     options: StartOptions,
+     instances: number,
+     workerIndex: number
+   ): ProcessDescription {
+     return {
+       id,
+       name,
+       script: options.script,
+       args: options.args || [],
+       cwd: options.cwd || process.cwd(),
+       env: {
+         ...options.env,
+         ...(instances > 1
+           ? {
+               NODE_APP_INSTANCE: String(workerIndex),
+               BM2_INSTANCE_ID: String(workerIndex),
+             }
+           : {}),
+       },
+       instances,
+       execMode: instances > 1 ? "cluster" : (options.execMode || "fork"),
+       autorestart: options.autorestart !== false,
+       maxRestarts: options.maxRestarts ?? DEFAULT_MAX_RESTARTS,
+       minUptime: options.minUptime ?? DEFAULT_MIN_UPTIME,
+       maxMemoryRestart: options.maxMemoryRestart
+         ? parseMemory(options.maxMemoryRestart)
+         : undefined,
+       watch: Array.isArray(options.watch) ? true : (options.watch ?? false),
+       watchPaths: Array.isArray(options.watch) ? options.watch : undefined,
+       ignoreWatch: options.ignoreWatch || ["node_modules", ".git", ".bm2"],
+       cronRestart: options.cron,
+       interpreter: options.interpreter,
+       interpreterArgs: options.interpreterArgs,
+       mergeLogs: options.mergeLogs ?? false,
+       logDateFormat: options.logDateFormat,
+       errorFile: options.errorFile,
+       outFile: options.outFile,
+       killTimeout: options.killTimeout ?? DEFAULT_KILL_TIMEOUT,
+       restartDelay: options.restartDelay ?? DEFAULT_RESTART_DELAY,
+       port: options.port,
+       healthCheckUrl: options.healthCheckUrl,
+       healthCheckInterval: options.healthCheckInterval,
+       healthCheckTimeout: options.healthCheckTimeout,
+       healthCheckMaxFails: options.healthCheckMaxFails,
+       logMaxSize: options.logMaxSize ? parseMemory(options.logMaxSize) : DEFAULT_LOG_MAX_SIZE,
+       logRetain: options.logRetain ?? DEFAULT_LOG_RETAIN,
+       logCompress: options.logCompress,
+       waitReady: options.waitReady,
+       listenTimeout: options.listenTimeout,
+       namespace: options.namespace,
+       nodeArgs: options.nodeArgs,
+       sourceMapSupport: options.sourceMapSupport,
+       treekill: true,
+     };
+   }
+ 
+   async stop(target: string | number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     const states: ProcessState[] = [];
+     for (const c of containers) {
+       await c.stop();
+       states.push(c.getState());
+     }
+     return states;
+   }
+ 
+   async restart(target: string | number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     const states: ProcessState[] = [];
+     for (const c of containers) {
+       await c.restart();
+       states.push(c.getState());
+     }
+     return states;
+   }
+ 
+   async reload(target: string | number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     // Use graceful reload for zero downtime
+     await this.gracefulReload.reload(containers);
+     return containers.map((c) => c.getState());
+   }
+ 
+   async del(target: string | number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     const states: ProcessState[] = [];
+     for (const c of containers) {
+       await c.stop(true);
+       states.push(c.getState());
+       this.processes.delete(c.id);
+     }
+     return states;
+   }
+ 
+   async stopAll(): Promise<ProcessState[]> {
+     const states: ProcessState[] = [];
+     for (const c of this.processes.values()) {
+       await c.stop();
+       states.push(c.getState());
+     }
+     return states;
+   }
+ 
+   async restartAll(): Promise<ProcessState[]> {
+     const states: ProcessState[] = [];
+     for (const c of this.processes.values()) {
+       await c.restart();
+       states.push(c.getState());
+     }
+     return states;
+   }
+ 
+   async reloadAll(): Promise<ProcessState[]> {
+     const containers = Array.from(this.processes.values());
+     await this.gracefulReload.reload(containers);
+     return containers.map((c) => c.getState());
+   }
+ 
+   async deleteAll(): Promise<ProcessState[]> {
+     const states: ProcessState[] = [];
+     for (const c of this.processes.values()) {
+       await c.stop(true);
+       await Bun.sleep(100)
+       states.push(c.getState());
+     }
+     this.processes.clear();
+     this.nextId = 0;
+     return states;
+   }
+ 
+   async scale(target: string | number, count: number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     if (containers.length === 0) return [];
+   
+     const first = containers[0]!;
+     const baseName = first.name.replace(/-\d+$/, "");
+     const currentCount = containers.length;
+   
+     if (count > currentCount) {
+       // Scale up
+       const toAdd = count - currentCount;
+       const baseConfig = first.config;
+       const states: ProcessState[] = [];
+   
+       for (let i = 0; i < toAdd; i++) {
+         const result = await this.start({
+           name: `${baseName}-${currentCount + i}`,
+           script: baseConfig.script,
+           args: baseConfig.args,
+           cwd: baseConfig.cwd,
+           env: baseConfig.env,
+           execMode: baseConfig.execMode,
+           autorestart: baseConfig.autorestart,
+           maxRestarts: baseConfig.maxRestarts,
+           watch: baseConfig.watch,
+           port: baseConfig.port,
+         });
+         states.push(...result);
+       }
+   
+       return [...containers.map((c) => c.getState()), ...states];
+     } else if (count < currentCount) {
+       // Scale down
+       const toRemove = containers.slice(count);
+       for (const c of toRemove) {
+         await c.stop(true);
+         this.processes.delete(c.id);
+       }
+       return containers.slice(0, count).map((c) => c.getState());
+     }
+   
+     return containers.map((c) => c.getState());
+   }
+   
+   list(): ProcessState[] {
+     return Array.from(this.processes.values()).map((p) => p.getState());
+   }
+ 
+   describe(target: string | number): ProcessState[] {
+     return this.resolveTarget(target).map((p) => p.getState());
+   }
+ 
+   async getLogs(target: string | number, lines: number = 20) {
+     const containers = this.resolveTarget(target);
+     const results: Array<{ name: string; id: number; out: string; err: string }> = [];
+     for (const c of containers) {
+       const logs = await this.logManager.readLogs(
+         c.name, c.id, lines, c.config.outFile, c.config.errorFile
+       );
+       results.push({ name: c.name, id: c.id, ...logs });
+     }
+     return results;
+   }
+ 
+   async flushLogs(target?: string | number) {
+     const containers = target
+       ? this.resolveTarget(target)
+       : Array.from(this.processes.values());
+     for (const c of containers) {
+       await this.logManager.flush(c.name, c.id, c.config.outFile, c.config.errorFile);
+     }
+   }
+ 
+   async save(): Promise<void> {
+     const data = Array.from(this.processes.values()).map((p) => ({
+       config: p.config,
+       restartCount: p.restartCount,
+     }));
+     await Bun.write(DUMP_FILE, JSON.stringify(data, null, 2));
+   }
+ 
+   async resurrect(): Promise<ProcessState[]> {
+     try {
+       const file = Bun.file(DUMP_FILE);
+       if (!(await file.exists())) return [];
+       const data = await file.json();
+       const states: ProcessState[] = [];
+ 
+       for (const item of data) {
+         const result = await this.start({
+           name: item.config.name,
+           script: item.config.script,
+           args: item.config.args,
+           cwd: item.config.cwd,
+           env: item.config.env,
+           autorestart: item.config.autorestart,
+           maxRestarts: item.config.maxRestarts,
+           watch: item.config.watch,
+           instances: 1,
+           execMode: item.config.execMode,
+           port: item.config.port,
+           healthCheckUrl: item.config.healthCheckUrl,
+         });
+         states.push(...result);
+       }
+       return states;
+     } catch {
+       return [];
+     }
+   }
+ 
+   async startEcosystem(config: EcosystemConfig): Promise<ProcessState[]> {
+     const states: ProcessState[] = [];
+     for (const app of config.apps) {
+       const result = await this.start(app);
+       states.push(...result);
+     }
+     return states;
+   }
+ 
+   async sendSignal(target: string | number, signal: string): Promise<void> {
+     for (const c of this.resolveTarget(target)) {
+       await c.sendSignal(signal);
+     }
+   }
+ 
+   async getMetrics(): Promise<MetricSnapshot> {
+     return this.monitor.takeSnapshot(this.list());
+   }
+ 
+   getPrometheusMetrics(): string {
+     return this.monitor.generatePrometheusMetrics(this.list());
+   }
+ 
+   getMetricsHistory(seconds: number = 300): MetricSnapshot[] {
+     return this.monitor.getHistory(seconds);
+   }
+ 
+   async reset(target: string | number): Promise<ProcessState[]> {
+     const containers = this.resolveTarget(target);
+     for (const c of containers) {
+       c.restartCount = 0;
+       c.unstableRestarts = 0;
+     }
+     return containers.map((c) => c.getState());
+   }
+ 
+   private resolveTarget(target: string | number): ProcessContainer[] {
+     if (target === "all") {
+       return Array.from(this.processes.values());
+     }
+ 
+     if (typeof target === "number" || /^\d+$/.test(String(target))) {
+       const id = typeof target === "number" ? target : parseInt(target);
+       const proc = this.processes.get(id);
+       return proc ? [proc] : [];
+     }
+ 
+     // Match by name or namespace
+     return Array.from(this.processes.values()).filter(
+       (p) =>
+         p.name === target ||
+         p.name.startsWith(`${target}-`) ||
+         p.config.namespace === target
+     );
+   }
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+import Table from "cli-table3";
+import type { ProcessState, ProcessStatus, ExecMode } from "./types";
+import { color } from "./colors";
+import { colorize } from "./utils";
+
+// ---------- Helpers ----------
+
+function h(label: string) {
+  return color(label, "cyan");
+}
+
+function prettyStatus(status: ProcessStatus) {
+  switch (status) {
+    case "online": return color("● online", "green");
+    case "stopping": return color("● stopping", "yellow");
+    case "stopped": return color("● stopped", "dim");
+    case "errored": return color("● errored", "red");
+    case "launching": return color("● launching", "cyan");
+    case "waiting-restart": return color("● waiting", "yellow");
+    case "one-launch-status": return color("● once", "magenta");
+    default: return status;
+  }
+}
+
+function prettyCpu(cpu: number) {
+  const v = `${cpu.toFixed(1)}%`;
+  if (cpu > 85) return color(v, "red");
+  if (cpu > 50) return color(v, "yellow");
+  return color(v, "green");
+}
+
+function prettyMemory(mem: number) {
+  const formatted = formatBytes(mem);
+  return formatted;
+}
+
+function highlightName(p: ProcessState) {
+  if (p.bm2_env.unstable_restarts > 0) return color(p.name, "yellow");
+  return p.name;
+}
+
+function formatUptime(startTime: number) {
+  if (!startTime) return "-";
+  const diff = Date.now() - startTime;
+  const sec = Math.floor(diff / 1000) % 60;
+  const min = Math.floor(diff / 1000 / 60) % 60;
+  const hr = Math.floor(diff / 1000 / 60 / 60);
+  return `${hr}h ${min}m ${sec}s`;
+}
+
+function formatBytes(bytes: number) {
+  if (!bytes) return "0b";
+  const sizes = ["b", "kb", "mb", "gb"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / Math.pow(1024, i);
+  return `${value.toFixed(1)}${sizes[i]}`;
+}
+
+function minimalBorders() {
+  return {
+    top: "─", "top-mid": "┬", "top-left": "┌", "top-right": "┐",
+    bottom: "─", "bottom-mid": "┴", "bottom-left": "└", "bottom-right": "┘",
+    left: "│", "left-mid": "├", mid: "─", "mid-mid": "┼",
+    right: "│", "right-mid": "┤", middle: "│"
+  };
+}
+
+// ---------- Table Printer ----------
+
+export function printProcessTable(processes: ProcessState[]) {
+  console.log("");
+  console.log(color("BM2 — Bun Process Manager", "bold"));
+  console.log(color("─────────────────────────────────────────────", "dim"));
+  console.log("");
+
+  if (!processes?.length) {
+    console.log(color("No processes running\n", "dim"));
+    return;
+  }
+
+ // const sorted = [...processes].sort((a, b) => a.pm_id - b.pm_id);
+
+  const table = new Table({
+    head: [
+      h("id"), h("name"), h("namespace"), h("version"), h("mode"), 
+      h("pid"), h("uptime"), h("↺"), h("status"), h("cpu"), h("mem")
+    ],
+    colAligns: ["right","left","left","left","left","right","right","right","left","right","right"],
+    style: { border: ["dim"] },
+    chars: minimalBorders(),
+  });
+
+  for (const p of processes) {
+    const cpu = p.monit?.cpu ?? 0;
+    const mem = p.monit?.memory ?? 0;
+    const uptime = p.status === "online"
+      ? formatUptime(p.bm2_env.pm_uptime)
+      : "-";
+
+    table.push([
+      p.pm_id,
+      highlightName(p),
+      p.namespace || "default",
+      p.bm2_env.version ?? "-",
+      p.bm2_env.execMode,
+      p.pid ?? "-",
+      uptime,
+      p.bm2_env.restart_time,
+      prettyStatus(p.status),
+      prettyCpu(cpu),
+      prettyMemory(mem)
+    ]);
+  }
+
+  console.log(table.toString());
+  console.log("");
+}
+
+
+export function liveWatchProcess(processes: ProcessState[], interval = 1000) {
+  let sortBy: "cpu" | "mem" | "uptime" | "default" = "default";
+
+  // Clear console helper
+  const clear = () => process.stdout.write("\x1Bc");
+
+  // Helper to get sorted processes
+  const getSortedProcesses = () => {
+    return [...processes].sort((a, b) => {
+      switch (sortBy) {
+        case "cpu": return (b.monit.cpu ?? 0) - (a.monit.cpu ?? 0);
+        case "mem": return (b.monit.memory ?? 0) - (a.monit.memory ?? 0);
+        case "uptime":
+          const uptimeA = a.status === "online" ? Date.now() - a.bm2_env.pm_uptime : 0;
+          const uptimeB = b.status === "online" ? Date.now() - b.bm2_env.pm_uptime : 0;
+          return uptimeB - uptimeA;
+        default: return a.pm_id - b.pm_id;
+      }
+    });
+  };
+
+  // Render table
+  const render = () => {
+    clear();
+    printProcessTable(getSortedProcesses());
+    
+    console.log(color("─".repeat(50), "dim"));
+    console.log(color("Keyboard Shortcuts", "cyan"));
+    console.log(color("─".repeat(50), "dim"));
+    
+    console.log(`${colorize("R", "green")}: Manual Reload`);
+    console.log(`${colorize("C", "green")}: Sort By CPU`);
+    console.log(`${colorize("M", "green")}: Sort By Memory`);
+    console.log(`${colorize("U", "green")}: Sort By Uptime`);
+    console.log(`${colorize("Q", "green")}: Quit`);
+    
+    console.log(color("─".repeat(50), "dim"));
+    
+    console.log(`Current Sort: ${sortBy.toUpperCase()}\n`);
+  };
+
+  // Initial render
+  render();
+
+  // Auto-refresh interval
+  const timer = setInterval(render, interval);
+
+  // Enable raw mode for keypress
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+
+    process.stdin.on("data", (key) => {
+      const k = key.toString().toLowerCase();
+      switch (k) {
+        case "\u0003": // Ctrl+C
+        case "q":      // Quit
+          clearInterval(timer);
+          process.exit();
+          break;
+        case "r":      // Reload
+          render();
+          console.log("[Table reloaded manually]");
+          break;
+        case "c":      // Sort by CPU
+          sortBy = "cpu";
+          render();
+          break;
+        case "m":      // Sort by Memory
+          sortBy = "mem";
+          render();
+          break;
+        case "u":      // Sort by Uptime
+          sortBy = "uptime";
+          render();
+          break;
+      }
+    });
+  }
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+ 
+ import { join } from "path";
+ 
+ export class StartupManager {
+   async generate(platform?: string): Promise<string> {
+     const os = platform || process.platform;
+     const bunPath = Bun.which("bun") || "/usr/local/bin/bun";
+     const bm2Path = join(import.meta.dir, "index.ts");
+     const daemonPath = join(import.meta.dir, "daemon.ts");
+ 
+     switch (os) {
+       case "linux":
+         return this.generateSystemd(bunPath, bm2Path, daemonPath);
+       case "darwin":
+         return this.generateLaunchd(bunPath, bm2Path, daemonPath);
+       default:
+         throw new Error(`Unsupported platform: ${os}`);
+     }
+   }
+ 
+   private generateSystemd(bunPath: string, bm2Path: string, daemonPath: string): string {
+     const unit = `[Unit]
+ Description=BM2 Process Manager
+ Documentation=https://github.com/bm2
+ After=network.target
+ 
+ [Service]
+ Type=forking
+ User=${process.env.USER || "root"}
+ LimitNOFILE=infinity
+ LimitNPROC=infinity
+ LimitCORE=infinity
+ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${join(bunPath, "..")}
+ Environment=BM2_HOME=${join(process.env.HOME || "/root", ".bm2")}
+ PIDFile=${join(process.env.HOME || "/root", ".bm2", "daemon.pid")}
+ Restart=on-failure
+ 
+ ExecStart=${bunPath} run ${daemonPath}
+ ExecReload=${bunPath} run ${bm2Path} reload all
+ ExecStop=${bunPath} run ${bm2Path} kill
+ 
+ [Install]
+ WantedBy=multi-user.target`;
+ 
+     const servicePath = "/etc/systemd/system/bm2.service";
+     return `# BM2 Systemd Service
+ # Save to: ${servicePath}
+ # Then run:
+ #   sudo systemctl daemon-reload
+ #   sudo systemctl enable bm2
+ #   sudo systemctl start bm2
+ 
+ ${unit}`;
+   }
+ 
+   private generateLaunchd(bunPath: string, bm2Path: string, daemonPath: string): string {
+     const plist = `<?xml version="1.0" encoding="UTF-8"?>
+ <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0">
+ <dict>
+     <key>Label</key>
+     <string>com.bm2.daemon</string>
+     <key>ProgramArguments</key>
+     <array>
+         <string>${bunPath}</string>
+         <string>run</string>
+         <string>${daemonPath}</string>
+     </array>
+     <key>RunAtLoad</key>
+     <true/>
+     <key>KeepAlive</key>
+     <true/>
+     <key>StandardOutPath</key>
+     <string>${join(process.env.HOME || "/Users/user", ".bm2", "logs", "daemon-out.log")}</string>
+     <key>StandardErrorPath</key>
+     <string>${join(process.env.HOME || "/Users/user", ".bm2", "logs", "daemon-error.log")}</string>
+     <key>EnvironmentVariables</key>
+     <dict>
+         <key>PATH</key>
+         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+         <key>HOME</key>
+         <string>${process.env.HOME}</string>
+     </dict>
+ </dict>
+ </plist>`;
+ 
+     const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+     return `# BM2 LaunchAgent (macOS)
+ # Save to: ${plistPath}
+ # Then run:
+ #   launchctl load ${plistPath}
+ 
+ ${plist}`;
+   }
+ 
+   async install(): Promise<string> {
+     const os = process.platform;
+     const content = await this.generate(os);
+ 
+     if (os === "linux") {
+       const servicePath = "/etc/systemd/system/bm2.service";
+       // Extract just the unit content
+       const unitContent = content.split("\n\n").slice(1).join("\n\n");
+       await Bun.write(servicePath, unitContent);
+ 
+       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" });
+       Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" });
+ 
+       return `Service installed at ${servicePath}\nRun: sudo systemctl start bm2`;
+     } else if (os === "darwin") {
+       const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+       // Extract plist content
+       const plistStart = content.indexOf("<?xml");
+       const plistContent = content.substring(plistStart);
+       await Bun.write(plistPath, plistContent);
+ 
+       return `Plist installed at ${plistPath}\nRun: launchctl load ${plistPath}`;
+     }
+ 
+     return "Unsupported platform for auto-install. Manual setup required.";
+   }
+ 
+   async uninstall(): Promise<string> {
+     const os = process.platform;
+ 
+     if (os === "linux") {
+       Bun.spawn(["sudo", "systemctl", "stop", "bm2"], { stdout: "inherit" });
+       Bun.spawn(["sudo", "systemctl", "disable", "bm2"], { stdout: "inherit" });
+       const { unlinkSync } = require("fs");
+       try { unlinkSync("/etc/systemd/system/bm2.service"); } catch {}
+       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" });
+       return "BM2 service removed";
+     } else if (os === "darwin") {
+       const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+       Bun.spawn(["launchctl", "unload", plistPath], { stdout: "inherit" });
+       const { unlinkSync } = require("fs");
+       try { unlinkSync(plistPath); } catch {}
+       return "BM2 launch agent removed";
+     }
+ 
+     return "Unsupported platform";
+   }
+ }
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+export type ProcessStatus =
+  | "online"
+  | "stopping"
+  | "stopped"
+  | "errored"
+  | "launching"
+  | "waiting-restart"
+  | "one-launch-status";
+
+export type ExecMode = "fork" | "cluster";
+
+export interface ProcessDescription {
+  id: number;
+  name: string;
+  script: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  instances: number;
+  execMode: ExecMode;
+  autorestart: boolean;
+  maxRestarts: number;
+  minUptime: number;
+  maxMemoryRestart?: number;
+  watch: boolean;
+  watchPaths?: string[];
+  ignoreWatch?: string[];
+  cronRestart?: string;
+  interpreter?: string;
+  interpreterArgs?: string[];
+  mergeLogs: boolean;
+  logDateFormat?: string;
+  errorFile?: string;
+  outFile?: string;
+  pidFile?: string;
+  killTimeout: number;
+  restartDelay: number;
+  listenTimeout?: number;
+  shutdownWithMessage?: boolean;
+  treekill?: boolean;
+  port?: number;
+  // Cluster specific
+  clusterMode?: boolean;
+  reusePort?: boolean;
+  // Health check
+  healthCheckUrl?: string;
+  healthCheckInterval?: number;
+  healthCheckTimeout?: number;
+  healthCheckMaxFails?: number;
+  // Log rotation
+  logMaxSize?: number;
+  logRetain?: number;
+  logCompress?: boolean;
+  // Graceful
+  gracefulListenTimeout?: number;
+  waitReady?: boolean;
+  // Deploy
+  deployConfig?: DeployConfig;
+  // Source map
+  sourceMapSupport?: boolean;
+  // Node args compatibility
+  nodeArgs?: string[];
+  // Namespace
+  namespace?: string;
+  // Version tracking
+  version?: string;
+  versioningConfig?: VersioningConfig;
+}
+
+export interface VersioningConfig {
+  currentVersion?: string;
+  previousVersions?: string[];
+  maxVersions?: number;
+}
+
+export interface ProcessState {
+  id: number;
+  name: string;
+  namespace?: string;
+  status: ProcessStatus;
+  pid?: number;
+  pm_id: number;
+  monit: {
+    memory: number;
+    cpu: number;
+    handles?: number;
+    eventLoopLatency?: number;
+  };
+  bm2_env: ProcessDescription & {
+    status: ProcessStatus;
+    pm_uptime: number;
+    restart_time: number;
+    unstable_restarts: number;
+    created_at: number;
+    pm_id: number;
+    version?: string;
+    axm_monitor?: Record<string, any>;
+    axm_actions?: any[];
+  };
+}
+
+export interface StartOptions {
+  name?: string;
+  script: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  instances?: number;
+  execMode?: ExecMode;
+  autorestart?: boolean;
+  maxRestarts?: number;
+  minUptime?: number;
+  maxMemoryRestart?: string | number;
+  watch?: boolean | string[];
+  ignoreWatch?: string[];
+  interpreter?: string;
+  interpreterArgs?: string[];
+  mergeLogs?: boolean;
+  logDateFormat?: string;
+  errorFile?: string;
+  outFile?: string;
+  killTimeout?: number;
+  restartDelay?: number;
+  cron?: string;
+  port?: number;
+  healthCheckUrl?: string;
+  healthCheckInterval?: number;
+  healthCheckTimeout?: number;
+  healthCheckMaxFails?: number;
+  logMaxSize?: string | number;
+  logRetain?: number;
+  logCompress?: boolean;
+  waitReady?: boolean;
+  listenTimeout?: number;
+  namespace?: string;
+  nodeArgs?: string[];
+  sourceMapSupport?: boolean;
+}
+
+export interface EcosystemConfig {
+  apps: StartOptions[];
+  deploy?: Record<string, DeployConfig>;
+}
+
+export interface DeployConfig {
+  user: string;
+  host: string | string[];
+  ref: string;
+  repo: string;
+  path: string;
+  preDeploy?: string;
+  postDeploy?: string;
+  preSetup?: string;
+  postSetup?: string;
+  ssh_options?: string;
+  env?: Record<string, string>;
+}
+
+export interface DaemonMessage {
+  type: string;
+  data?: any;
+  id?: string;
+}
+
+export interface DaemonResponse {
+  type: string;
+  data?: any;
+  success: boolean;
+  error?: string;
+  id?: string;
+}
+
+export interface MetricSnapshot {
+  timestamp: number;
+  processes: Array<{
+    id: number;
+    name: string;
+    pid?: number;
+    cpu: number;
+    memory: number;
+    eventLoopLatency?: number;
+    handles?: number;
+    status: ProcessStatus;
+    restarts: number;
+    uptime: number;
+  }>;
+  system: {
+    totalMemory: number;
+    freeMemory: number;
+    cpuCount: number;
+    loadAvg: number[];
+    platform: string;
+  };
+}
+
+export interface LogRotateOptions {
+  maxSize: number;
+  retain: number;
+  compress: boolean;
+  dateFormat?: string;
+}
+
+export interface HealthCheckConfig {
+  url: string;
+  interval: number;
+  timeout: number;
+  maxFails: number;
+}
+
+export interface DashboardState {
+  processes: ProcessState[];
+  metrics: MetricSnapshot;
+  logs: Record<string, { out: string; err: string }>;
+}
+/**
+ * BM2 — Bun Process Manager
+ * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
+ */
+
+import { mkdirSync, existsSync } from "fs";
+import { join } from "path";
+import { ALL_DIRS, BM2_HOME } from "./constants";
+
+export const DUMP_FILE = join(BM2_HOME, "dump.json");
+
+export function ensureDirs() {
+  for (const dir of ALL_DIRS) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+}
+
+export function parseMemory(value: string | number): number {
+  if (typeof value === "number") return value;
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*(K|M|G|T)?B?$/i);
+  if (!match) throw new Error(`Invalid memory value: ${value}`);
+  const num = parseFloat(match[1]!);
+  const unit = (match[2] || "").toUpperCase();
+  const multipliers: Record<string, number> = {
+    "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4,
+  };
+  return num * (multipliers[unit] || 1);
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+export function formatUptime(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const d = Math.floor(h / 24);
+  if (d > 0) return `${d}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${m % 60}m`;
+  if (m > 0) return `${m}m ${s % 60}s`;
+  return `${s}s`;
+}
+
+export function generateId(): string {
+  return crypto.randomUUID().replace(/-/g, "").substring(0, 12);
+}
+
+export function colorize(text: string, color: string): string {
+  const colors: Record<string, string> = {
+    red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+    blue: "\x1b[34m", magenta: "\x1b[35m", cyan: "\x1b[36m",
+    white: "\x1b[37m", gray: "\x1b[90m", bold: "\x1b[1m",
+    dim: "\x1b[2m", reset: "\x1b[0m",
+  };
+  return `${colors[color] || ""}${text}\x1b[0m`;
+}
+
+export function padRight(str: string, len: number): string {
+  return str.length >= len ? str.substring(0, len) : str + " ".repeat(len - str.length);
+}
+
+export function getCpuCount(): number {
+  const cpus = require("os").cpus();
+  return cpus.length;
+}
+
+export function getSystemInfo() {
+  const os = require("os");
+  return {
+    totalMemory: os.totalmem(),
+    freeMemory: os.freemem(),
+    cpuCount: os.cpus().length,
+    loadAvg: os.loadavg(),
+    platform: os.platform(),
+    hostname: os.hostname(),
+    uptime: os.uptime(),
+  };
+}
+
+export function treeKill(pid: number, signal: string = "SIGTERM"): Promise<void> {
+  return new Promise(async (resolve) => {
+    try {
+      const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
+      const output = await new Response(result.stdout).text();
+      const childPids = output.trim().split("\n").filter(Boolean).map(Number);
+
+      for (const childPid of childPids) {
+        await treeKill(childPid, signal);
+      }
+
+      try {
+        process.kill(pid, signal as any);
+      } catch {}
+    } catch {}
+    resolve();
+  });
+}
+
+export function parseCron(expression: string): { next: () => Date } {
+  const parts = expression.trim().split(/\s+/);
+  if (parts.length !== 5) throw new Error(`Invalid cron: ${expression}`);
+
+  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts as [string, string, string, string, string];
+
+  function matchField(value: number, expr: string, _max: number): boolean {
+    if (expr === "*") return true;
+
+    for (const part of expr.split(",")) {
+      if (part.includes("/")) {
+        const [range, step] = part.split("/");
+        const stepNum = parseInt(step!);
+        const start = range === "*" ? 0 : parseInt(range!);
+        if ((value - start) % stepNum === 0 && value >= start) return true;
+      } else if (part.includes("-")) {
+        const [lo, hi] = part.split("-").map(Number);
+        if (value >= lo! && value <= hi!) return true;
+      } else {
+        if (value === parseInt(part)) return true;
+      }
+    }
+    return false;
+  }
+
+  return {
+    next(): Date {
+      const now = new Date();
+      const candidate = new Date(now);
+      candidate.setSeconds(0, 0);
+      candidate.setMinutes(candidate.getMinutes() + 1);
+
+      for (let i = 0; i < 525600; i++) {
+        const min = candidate.getMinutes();
+        const hour = candidate.getHours();
+        const dom = candidate.getDate();
+        const mon = candidate.getMonth() + 1;
+        const dow = candidate.getDay();
+
+        if (
+          matchField(min, minExpr, 59) &&
+          matchField(hour, hourExpr, 23) &&
+          matchField(dom, domExpr, 31) &&
+          matchField(mon, monExpr, 12) &&
+          matchField(dow, dowExpr, 6)
+        ) {
+          return candidate;
+        }
+
+        candidate.setMinutes(candidate.getMinutes() + 1);
+      }
+
+      throw new Error("Could not find next cron time");
+    },
+  };
+}
