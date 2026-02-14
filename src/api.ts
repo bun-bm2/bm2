@@ -462,6 +462,7 @@ export class BM2 extends EventEmitter<BM2Events> {
    * raw response. Useful for custom or future command types.
    */
   async send(message: DaemonMessage): Promise<DaemonResponse> {
+    
     if (!message.id) {
       message.id = generateId();
     }
@@ -473,7 +474,6 @@ export class BM2 extends EventEmitter<BM2Events> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
-      // @ts-expect-error — Bun-specific option for Unix socket
       unix: DAEMON_SOCKET,
     });
 
