@@ -84,10 +84,12 @@ async function startDaemon(): Promise<void> {
   // Detach so the daemon outlives the CLI
   child.unref();
 
+  console.error(colorize("Waiting for daemon..", "green"));
+  
   // Wait for socket to appear
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 100; i++) {
     if (existsSync(DAEMON_SOCKET)) return;
-    await Bun.sleep(100);
+    await Bun.sleep(500);
   }
 
   throw new Error("Daemon failed to start (socket not found after 5 s)");
