@@ -89,7 +89,8 @@ async function startDaemon(): Promise<void> {
   // Wait for socket to appear
   for (let i = 0; i < 100; i++) {
     if (existsSync(DAEMON_SOCKET)) return;
-    await Bun.sleep(500);
+    await Bun.sleep(1000);
+    console.error(colorize("Still waiting for daemon..", "cyan"));
   }
 
   throw new Error("Daemon failed to start (socket not found after 5 s)");
