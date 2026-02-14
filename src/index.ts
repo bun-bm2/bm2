@@ -41,7 +41,7 @@ import type {
 } from "./types";
 import Table from "cli-table3";
 import { statusColor } from "./colors";
-import { liveWatchProcess, printProcessTable, watchProcesses } from "./process-table";
+import { liveWatchProcess, printProcessTable } from "./process-table";
 
 // ---------------------------------------------------------------------------
 // Ensure directory structure exists
