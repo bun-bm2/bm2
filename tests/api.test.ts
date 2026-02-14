@@ -1,0 +1,952 @@
+// tests/api.test.ts
+
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn, jest } from "bun:test";
+import { BM2, BM2Error } from "../src/api";
+import type { DaemonResponse, ProcessState, MetricSnapshot } from "../src/types";
+
+// ────────────────────────────────────────────────────────────────────────────
+// Helpers & Fixtures
+// ────────────────────────────────────────────────────────────────────────────
+
+function makeProcess(overrides: Partial<ProcessState> = {}): ProcessState {
+  return {
+    id: 0,
+    name: "test-app",
+    script: "/abs/path/app.ts",
+    status: "online" as ProcessStatus,
+    pid: 1234,
+    pm_id: 0,
+    instances: 1,
+    namespace: "default",
+    restarts: 0,
+    uptime: 10000,
+    memory: 50_000_000,
+    cpu: 1.5,
+    created_at: Date.now(),
+    ...overrides,
+  } as ProcessState;
+}
+
+function makeMetricSnapshot(overrides: Partial<MetricSnapshot> = {}): MetricSnapshot {
+  return {
+    timestamp: Date.now(),
+    processes: [],
+    system: { cpu: 10, memory: 40, loadavg: [1, 1, 1] },
+    ...overrides,
+  } as MetricSnapshot;
+}
+
+function okResponse(data: any = {}): DaemonResponse {
+  return { success: true, data, id: "test-id" };
+}
+
+function errResponse(error: string = "Something went wrong"): DaemonResponse {
+  return { success: false, error, id: "test-id" };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Test suite
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("BM2 API", () => {
+  let bm2: BM2;
+  let sendMock: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    bm2 = new BM2();
+    // Mock `send` so we never touch real sockets / daemon
+    sendMock = spyOn(bm2, "send");
+    // Default: pretend we're connected
+    (bm2 as any)._connected = true;
+  });
+
+  afterEach(() => {
+    bm2.stopPolling();
+    sendMock.mockRestore();
+  });
+
+  // ───────────────────── Connection lifecycle ─────────────────────────
+
+  describe("connect()", () => {
+    test("sets connected = true and emits daemon:connected on success", async () => {
+      // We need to also mock the private helpers for connect()
+      const aliveSpy = spyOn(bm2 as any, "isDaemonAlive").mockResolvedValue(true);
+      sendMock.mockResolvedValue(okResponse({ pid: 42 }));
+
+      const events: string[] = [];
+      bm2.on("daemon:connected", () => events.push("daemon:connected"));
+
+      const result = await bm2.connect();
+
+      expect(result).toBe(bm2);
+      expect(bm2.connected).toBe(true);
+      expect(bm2.daemonPid).toBe(42);
+      expect(events).toContain("daemon:connected");
+
+      aliveSpy.mockRestore();
+    });
+
+    test("launches daemon when not alive", async () => {
+      const aliveSpy = spyOn(bm2 as any, "isDaemonAlive").mockResolvedValue(false);
+      const launchSpy = spyOn(bm2 as any, "launchDaemon").mockResolvedValue(undefined);
+      sendMock.mockResolvedValue(okResponse({ pid: 99 }));
+
+      await bm2.connect();
+
+      expect(launchSpy).toHaveBeenCalledTimes(1);
+      expect(bm2.connected).toBe(true);
+
+      aliveSpy.mockRestore();
+      launchSpy.mockRestore();
+    });
+
+    test("throws when ping fails after connection", async () => {
+      const aliveSpy = spyOn(bm2 as any, "isDaemonAlive").mockResolvedValue(true);
+      sendMock.mockResolvedValue(errResponse("ping failed"));
+
+      await expect(bm2.connect()).rejects.toThrow("Failed to connect to BM2 daemon");
+
+      aliveSpy.mockRestore();
+    });
+  });
+
+  describe("disconnect()", () => {
+    test("sets connected = false and emits daemon:disconnected", async () => {
+      (bm2 as any)._connected = true;
+      const events: string[] = [];
+      bm2.on("daemon:disconnected", () => events.push("daemon:disconnected"));
+
+      await bm2.disconnect();
+
+      expect(bm2.connected).toBe(false);
+      expect(events).toContain("daemon:disconnected");
+    });
+
+    test("stops polling on disconnect", async () => {
+      const stopSpy = spyOn(bm2, "stopPolling");
+      await bm2.disconnect();
+      expect(stopSpy).toHaveBeenCalled();
+      stopSpy.mockRestore();
+    });
+  });
+
+  // ───────────────────── Process management ─────────────────────────
+
+  describe("start()", () => {
+    test("sends start message and returns process list", async () => {
+      const procs = [makeProcess({ name: "api" })];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const result = await bm2.start({ script: "./app.ts", name: "api" });
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "start" })
+      );
+    });
+
+    test("resolves script path to absolute", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.start({ script: "./relative/app.ts", name: "test" });
+
+      const callData = sendMock.mock.calls[0][0].data;
+      expect(callData.script).toMatch(/^\//); // absolute path
+      expect(callData.script).not.toContain("./");
+    });
+
+    test("emits process:start event", async () => {
+      const procs = [makeProcess()];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const emitted: ProcessState[][] = [];
+      bm2.on("process:start", (p) => emitted.push(p));
+
+      await bm2.start({ script: "./app.ts", name: "test" });
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toEqual(procs);
+    });
+
+    test("throws BM2Error on daemon failure", async () => {
+      sendMock.mockResolvedValue(errResponse("script not found"));
+
+      await expect(bm2.start({ script: "./nope.ts" })).rejects.toThrow(BM2Error);
+    });
+  });
+
+  describe("startEcosystem()", () => {
+    test("sends ecosystem message with resolved paths", async () => {
+      const procs = [makeProcess({ name: "a" }), makeProcess({ name: "b" })];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const config = {
+        apps: [
+          { script: "./a.ts", name: "a" },
+          { script: "./b.ts", name: "b" },
+        ],
+      };
+
+      const result = await bm2.startEcosystem(config);
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ecosystem" })
+      );
+      // Scripts should be resolved
+      for (const app of config.apps) {
+        expect(app.script).toMatch(/^\//);
+      }
+    });
+
+    test("emits process:start event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:start", (p) => emitted.push(p));
+
+      await bm2.startEcosystem({ apps: [{ script: "./a.ts" }] });
+
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("stop()", () => {
+    test("sends stop with target", async () => {
+      const procs = [makeProcess({ status: "stopped" as any })];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const result = await bm2.stop("my-app");
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "stop", data: { target: "my-app" } })
+      );
+    });
+
+    test("sends stopAll when target is 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.stop("all");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "stopAll", data: undefined })
+      );
+    });
+
+    test("defaults to 'all' when no target given", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.stop();
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "stopAll" })
+      );
+    });
+
+    test("accepts numeric target and converts to string", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.stop(3);
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "stop", data: { target: "3" } })
+      );
+    });
+
+    test("emits process:stop event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:stop", (p) => emitted.push(p));
+
+      await bm2.stop("test");
+
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("restart()", () => {
+    test("sends restart with target", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.restart("my-app");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "restart", data: { target: "my-app" } })
+      );
+    });
+
+    test("sends restartAll when target is 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.restart("all");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "restartAll", data: undefined })
+      );
+    });
+
+    test("defaults to 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.restart();
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "restartAll" })
+      );
+    });
+
+    test("emits process:restart event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:restart", (p) => emitted.push(p));
+      await bm2.restart("app");
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("reload()", () => {
+    test("sends reload with target", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.reload("my-app");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "reload", data: { target: "my-app" } })
+      );
+    });
+
+    test("sends reloadAll when target is 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.reload();
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "reloadAll" })
+      );
+    });
+
+    test("emits process:reload event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:reload", (p) => emitted.push(p));
+      await bm2.reload("app");
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("delete()", () => {
+    test("sends delete with target", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.delete("my-app");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "delete", data: { target: "my-app" } })
+      );
+    });
+
+    test("sends deleteAll when target is 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.delete();
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "deleteAll" })
+      );
+    });
+
+    test("emits process:delete event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:delete", (p) => emitted.push(p));
+      await bm2.delete("app");
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("scale()", () => {
+    test("sends scale with target and count", async () => {
+      const procs = [makeProcess(), makeProcess({ id: 1, pm_id: 1 })];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const result = await bm2.scale("my-app", 4);
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "scale",
+          data: { target: "my-app", count: 4 },
+        })
+      );
+    });
+
+    test("converts numeric target to string", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.scale(0, 2);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { target: "0", count: 2 },
+        })
+      );
+    });
+
+    test("emits process:scale event", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const emitted: any[] = [];
+      bm2.on("process:scale", (p) => emitted.push(p));
+      await bm2.scale("app", 3);
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("sendSignal()", () => {
+    test("sends signal command", async () => {
+      sendMock.mockResolvedValue(okResponse());
+
+      await bm2.sendSignal("my-app", "SIGHUP");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "signal",
+          data: { target: "my-app", signal: "SIGHUP" },
+        })
+      );
+    });
+
+    test("converts numeric target to string", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      await bm2.sendSignal(2, "SIGTERM");
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { target: "2", signal: "SIGTERM" },
+        })
+      );
+    });
+  });
+
+  describe("reset()", () => {
+    test("sends reset with target", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.reset("my-app");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "reset",
+          data: { target: "my-app" },
+        })
+      );
+    });
+
+    test("defaults to 'all'", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.reset();
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { target: "all" },
+        })
+      );
+    });
+  });
+
+  // ───────────────────── Introspection ──────────────────────────────
+
+  describe("list()", () => {
+    test("returns array of process states", async () => {
+      const procs = [makeProcess({ name: "a" }), makeProcess({ name: "b", id: 1 })];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const result = await bm2.list();
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "list" })
+      );
+    });
+
+    test("returns empty array when no processes", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      const result = await bm2.list();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("describe()", () => {
+    test("sends describe with target", async () => {
+      const proc = makeProcess({ name: "api" });
+      sendMock.mockResolvedValue(okResponse([proc]));
+
+      const result = await bm2.describe("api");
+
+      expect(result).toEqual([proc]);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "describe",
+          data: { target: "api" },
+        })
+      );
+    });
+
+    test("accepts numeric target", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+      await bm2.describe(0);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { target: "0" } })
+      );
+    });
+  });
+
+  // ───────────────────── Logs ───────────────────────────────────────
+
+  describe("logs()", () => {
+    test("retrieves logs with default parameters", async () => {
+      const logData = [{ name: "app", id: 0, out: "hello\n", err: "" }];
+      sendMock.mockResolvedValue(okResponse(logData));
+
+      const result = await bm2.logs();
+
+      expect(result).toEqual(logData);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "logs",
+          data: { target: "all", lines: 20 },
+        })
+      );
+    });
+
+    test("accepts custom target and line count", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.logs("my-app", 100);
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { target: "my-app", lines: 100 },
+        })
+      );
+    });
+
+    test("emits log:data event", async () => {
+      const logData = [{ name: "app", id: 0, out: "log line", err: "" }];
+      sendMock.mockResolvedValue(okResponse(logData));
+
+      const emitted: any[] = [];
+      bm2.on("log:data", (logs) => emitted.push(logs));
+
+      await bm2.logs();
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toEqual(logData);
+    });
+  });
+
+  describe("flush()", () => {
+    test("sends flush with target", async () => {
+      sendMock.mockResolvedValue(okResponse());
+
+      await bm2.flush("my-app");
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "flush",
+          data: { target: "my-app" },
+        })
+      );
+    });
+
+    test("sends flush without target when omitted", async () => {
+      sendMock.mockResolvedValue(okResponse());
+
+      await bm2.flush();
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "flush",
+          data: undefined,
+        })
+      );
+    });
+
+    test("sends flush with numeric target", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      await bm2.flush(0);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { target: "0" } })
+      );
+    });
+  });
+
+  // ───────────────────── Monitoring ─────────────────────────────────
+
+  describe("metrics()", () => {
+    test("returns metric snapshot and emits event", async () => {
+      const snapshot = makeMetricSnapshot();
+      sendMock.mockResolvedValue(okResponse(snapshot));
+
+      const emitted: MetricSnapshot[] = [];
+      bm2.on("metrics", (s) => emitted.push(s));
+
+      const result = await bm2.metrics();
+
+      expect(result).toEqual(snapshot);
+      expect(emitted).toHaveLength(1);
+    });
+  });
+
+  describe("metricsHistory()", () => {
+    test("sends metricsHistory with default seconds", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.metricsHistory();
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "metricsHistory",
+          data: { seconds: 300 },
+        })
+      );
+    });
+
+    test("sends metricsHistory with custom seconds", async () => {
+      sendMock.mockResolvedValue(okResponse([]));
+
+      await bm2.metricsHistory(60);
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { seconds: 60 },
+        })
+      );
+    });
+  });
+
+  describe("prometheus()", () => {
+    test("returns prometheus-formatted string", async () => {
+      const promText = '# HELP bm2_cpu CPU usage\nbm2_cpu{name="app"} 1.5\n';
+      sendMock.mockResolvedValue(okResponse(promText));
+
+      const result = await bm2.prometheus();
+
+      expect(result).toBe(promText);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "prometheus" })
+      );
+    });
+  });
+
+  describe("startPolling() / stopPolling()", () => {
+    test("starts periodic metrics fetching", async () => {
+      sendMock.mockResolvedValue(okResponse(makeMetricSnapshot()));
+
+      const emitted: any[] = [];
+      bm2.on("metrics", (s) => emitted.push(s));
+
+      bm2.startPolling(50);
+
+      // Wait enough for a couple ticks
+      await Bun.sleep(160);
+      bm2.stopPolling();
+
+      expect(emitted.length).toBeGreaterThanOrEqual(2);
+    });
+
+    test("emits error event when metrics call fails during polling", async () => {
+      sendMock.mockRejectedValue(new Error("connection lost"));
+
+      const errors: Error[] = [];
+      bm2.on("error", (e) => errors.push(e));
+
+      bm2.startPolling(50);
+
+      await Bun.sleep(100);
+      bm2.stopPolling();
+
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      expect(errors[0].message).toBe("connection lost");
+    });
+
+    test("stopPolling clears the interval", () => {
+      bm2.startPolling(100);
+      expect((bm2 as any)._pollTimer).not.toBeNull();
+
+      bm2.stopPolling();
+      expect((bm2 as any)._pollTimer).toBeNull();
+    });
+
+    test("startPolling replaces existing timer", () => {
+      bm2.startPolling(100);
+      const first = (bm2 as any)._pollTimer;
+
+      bm2.startPolling(200);
+      const second = (bm2 as any)._pollTimer;
+
+      expect(second).not.toBe(first);
+      bm2.stopPolling();
+    });
+  });
+
+  // ───────────────────── Persistence ────────────────────────────────
+
+  describe("save()", () => {
+    test("sends save command", async () => {
+      sendMock.mockResolvedValue(okResponse());
+
+      await bm2.save();
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "save" })
+      );
+    });
+  });
+
+  describe("resurrect()", () => {
+    test("sends resurrect and returns restored processes", async () => {
+      const procs = [makeProcess()];
+      sendMock.mockResolvedValue(okResponse(procs));
+
+      const result = await bm2.resurrect();
+
+      expect(result).toEqual(procs);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "resurrect" })
+      );
+    });
+  });
+
+  // ───────────────────── Dashboard ──────────────────────────────────
+
+  describe("dashboard()", () => {
+    test("starts dashboard with default ports", async () => {
+      sendMock.mockResolvedValue(okResponse({ port: 9100, metricsPort: 9101 }));
+
+      const result = await bm2.dashboard();
+
+      expect(result).toEqual({ port: 9100, metricsPort: 9101 });
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "dashboard" })
+      );
+    });
+
+    test("starts dashboard with custom ports", async () => {
+      sendMock.mockResolvedValue(okResponse({ port: 3000, metricsPort: 3001 }));
+
+      const result = await bm2.dashboard(3000, 3001);
+
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { port: 3000, metricsPort: 3001 },
+        })
+      );
+    });
+  });
+
+  describe("dashboardStop()", () => {
+    test("sends dashboardStop command", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      await bm2.dashboardStop();
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "dashboardStop" })
+      );
+    });
+  });
+
+  // ───────────────────── Modules ────────────────────────────────────
+
+  describe("moduleInstall()", () => {
+    test("installs module and returns path", async () => {
+      sendMock.mockResolvedValue(okResponse({ path: "/home/.bm2/modules/foo" }));
+
+      const result = await bm2.moduleInstall("foo");
+
+      expect(result).toEqual({ path: "/home/.bm2/modules/foo" });
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "moduleInstall",
+          data: { module: "foo" },
+        })
+      );
+    });
+  });
+
+  describe("moduleUninstall()", () => {
+    test("sends moduleUninstall command", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      await bm2.moduleUninstall("foo");
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "moduleUninstall",
+          data: { module: "foo" },
+        })
+      );
+    });
+  });
+
+  describe("moduleList()", () => {
+    test("returns list of installed modules", async () => {
+      const modules = [{ name: "foo", version: "1.0.0" }];
+      sendMock.mockResolvedValue(okResponse(modules));
+
+      const result = await bm2.moduleList();
+
+      expect(result).toEqual(modules);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "moduleList" })
+      );
+    });
+  });
+
+  // ───────────────────── Daemon lifecycle ───────────────────────────
+
+  describe("ping()", () => {
+    test("returns daemon pid and uptime", async () => {
+      sendMock.mockResolvedValue(okResponse({ pid: 42, uptime: 12345 }));
+
+      const result = await bm2.ping();
+
+      expect(result).toEqual({ pid: 42, uptime: 12345 });
+    });
+  });
+
+  describe("kill()", () => {
+    test("sends kill, cleans up state, and emits daemon:killed", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      (bm2 as any)._connected = true;
+      (bm2 as any)._daemonPid = 42;
+
+      const events: string[] = [];
+      bm2.on("daemon:killed", () => events.push("daemon:killed"));
+
+      await bm2.kill();
+
+      expect(bm2.connected).toBe(false);
+      expect(bm2.daemonPid).toBeNull();
+      expect(events).toContain("daemon:killed");
+    });
+
+    test("does not throw when send fails (daemon exits before responding)", async () => {
+      sendMock.mockRejectedValue(new Error("connection reset"));
+
+      await expect(bm2.kill()).resolves.toBeUndefined();
+      expect(bm2.connected).toBe(false);
+    });
+
+    test("stops polling on kill", async () => {
+      sendMock.mockResolvedValue(okResponse());
+      const stopSpy = spyOn(bm2, "stopPolling");
+
+      await bm2.kill();
+
+      expect(stopSpy).toHaveBeenCalled();
+      stopSpy.mockRestore();
+    });
+  });
+
+  describe("daemonReload()", () => {
+    test("sends daemonReload and returns result", async () => {
+      sendMock.mockResolvedValue(okResponse("daemon reloaded"));
+
+      const result = await bm2.daemonReload();
+
+      expect(result).toBe("daemon reloaded");
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "daemonReload" })
+      );
+    });
+  });
+
+  // ───────────────────── Error handling ─────────────────────────────
+
+  describe("BM2Error", () => {
+    test("is thrown on failed daemon responses", async () => {
+      sendMock.mockResolvedValue(errResponse("process not found"));
+
+      try {
+        await bm2.list();
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(BM2Error);
+        expect((err as BM2Error).command).toBe("list");
+        expect((err as BM2Error).message).toBe("process not found");
+        expect((err as BM2Error).response).toEqual(errResponse("process not found"));
+      }
+    });
+
+    test("uses default message when error field is missing", async () => {
+      sendMock.mockResolvedValue({ success: false, id: "x" } as DaemonResponse);
+
+      try {
+        await bm2.stop("app");
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(BM2Error);
+        expect((err as BM2Error).message).toContain('Command "stop" failed');
+      }
+    });
+  });
+
+  // ───────────────────── sendOrThrow / send internals ───────────────
+
+  describe("sendOrThrow()", () => {
+    test("returns response when successful", async () => {
+      sendMock.mockResolvedValue(okResponse({ foo: "bar" }));
+
+      // Access via a public method that uses sendOrThrow
+      const result = await bm2.list();
+      expect(result).toEqual({ foo: "bar" });
+    });
+
+    test("propagates transport-level errors from send()", async () => {
+      sendMock.mockRejectedValue(new Error("ECONNREFUSED"));
+
+      await expect(bm2.list()).rejects.toThrow("ECONNREFUSED");
+    });
+  });
+
+  // ───────────────────── Target routing patterns ────────────────────
+
+  describe("target routing (all vs specific)", () => {
+    const methodConfigs = [
+      { method: "stop", allType: "stopAll", specificType: "stop" },
+      { method: "restart", allType: "restartAll", specificType: "restart" },
+      { method: "reload", allType: "reloadAll", specificType: "reload" },
+      { method: "delete", allType: "deleteAll", specificType: "delete" },
+    ] as const;
+
+    for (const { method, allType, specificType } of methodConfigs) {
+      test(`${method}() sends "${allType}" for "all" target`, async () => {
+        sendMock.mockResolvedValue(okResponse([]));
+        await (bm2 as any)[method]("all");
+        expect(sendMock).toHaveBeenCalledWith(
+          expect.objectContaining({ type: allType, data: undefined })
+        );
+      });
+
+      test(`${method}() sends "${specificType}" for named target`, async () => {
+        sendMock.mockResolvedValue(okResponse([]));
+        await (bm2 as any)[method]("my-app");
+        expect(sendMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: specificType,
+            data: { target: "my-app" },
+          })
+        );
+      });
+
+      test(`${method}() defaults to "all"`, async () => {
+        sendMock.mockResolvedValue(okResponse([]));
+        await (bm2 as any)[method]();
+        expect(sendMock).toHaveBeenCalledWith(
+          expect.objectContaining({ type: allType })
+        );
+      });
+    }
+  });
+
+  // ───────────────────── Property accessors ─────────────────────────
+
+  describe("property accessors", () => {
+    test("connected is false by default on fresh instance", () => {
+      const fresh = new BM2();
+      expect(fresh.connected).toBe(false);
+    });
+
+    test("daemonPid is null by default", () => {
+      const fresh = new BM2();
+      expect(fresh.daemonPid).toBeNull();
+    });
+  });
+});
