@@ -32,7 +32,3 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
-src/hello.js
-src/all.txt
-./src/hello.js
-
