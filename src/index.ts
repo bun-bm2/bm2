@@ -72,13 +72,13 @@ async function startDaemon(): Promise<void> {
   const stdout = Bun.file(DAEMON_OUT_LOG_FILE);
   const stderr = Bun.file(DAEMON_ERR_LOG_FILE);
   
-  if(!(await stdout.exists())) await Bun.write(stdout, "");
-  if(!(await stderr.exists())) await Bun.write(stderr, "");
+  if (!(await stdout.exists())) await Bun.write(stdout, "");
+  if (!(await stderr.exists())) await Bun.write(stderr, "");
     
   const child = Bun.spawn([bunPath, "run", daemonScript], {
     stdout,
     stderr,
-    stdin:  "ignore",
+    stdin: "ignore",
   });
 
   // Detach so the daemon outlives the CLI
@@ -88,12 +88,15 @@ async function startDaemon(): Promise<void> {
   
   // Wait for socket to appear
   for (let i = 0; i < 100; i++) {
-    if (existsSync(DAEMON_SOCKET)) return;
-    await Bun.sleep(1000);
+    if (isDaemonRunning()) return;
+    
+    await Bun.sleep(10_000);
     console.error(colorize("Still waiting for daemon..", "cyan"));
   }
-
-  throw new Error("Daemon failed to start (socket not found after 5 s)");
+  
+  if (!isDaemonRunning()) {
+    throw new Error("Daemon failed to start (socket not found after 5 s)");
+  }
 }
 
 async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
