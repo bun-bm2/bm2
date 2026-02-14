@@ -1,3 +1,4 @@
+
 # ⚡ BM2
 
 **A blazing-fast, full-featured process manager built entirely on Bun native APIs.**
@@ -47,6 +48,20 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
   - [WebSocket API](#websocket-api)
 - [Prometheus and Grafana Integration](#prometheus-and-grafana-integration)
 - [Programmatic API](#programmatic-api)
+  - [Quick Start](#programmatic-quick-start)
+  - [Connection Lifecycle](#connection-lifecycle)
+  - [Process Management](#programmatic-process-management)
+  - [Introspection](#introspection)
+  - [Logs](#logs)
+  - [Monitoring and Metrics](#programmatic-monitoring-and-metrics)
+  - [Persistence](#persistence)
+  - [Dashboard Control](#dashboard-control)
+  - [Module Management](#module-management)
+  - [Daemon Lifecycle](#daemon-lifecycle)
+  - [Low-Level Transport](#low-level-transport)
+  - [Events](#events)
+  - [Error Handling](#error-handling)
+  - [Direct ProcessManager Usage](#direct-processmanager-usage)
 - [Architecture](#architecture)
 - [Comparison with PM2](#comparison-with-pm2)
 - [Recipes and Examples](#recipes-and-examples)
@@ -1258,10 +1273,475 @@ groups:
 
 ## Programmatic API
 
-BM2 can be used as a library in your own Bun applications:
+BM2 exposes two levels of programmatic access. The `BM2` client class communicates with the daemon over its Unix socket, giving you the same capabilities as the CLI from within any Bun application. For in-process usage without a daemon, you can use the `ProcessManager` class directly.
 
+### Programmatic Quick Start
+
+```ts
+import BM2 from "bm2";
+
+const bm2 = new BM2();
+await bm2.connect();
+
+// Start a clustered application
+await bm2.start({
+  script: "./server.ts",
+  name: "api",
+  instances: 4,
+  execMode: "cluster",
+  port: 3000,
+  env: { NODE_ENV: "production" },
+});
+
+// List all processes
+const processes = await bm2.list();
+console.log(processes);
+
+// Stream metrics every 2 seconds
+bm2.on("metrics", (snapshot) => {
+  console.log(`CPU: ${snapshot.system.cpu}%  Memory: ${snapshot.system.memory}%`);
+});
+bm2.startPolling(2000);
+
+// Graceful shutdown
+bm2.stopPolling();
+await bm2.disconnect();
 ```
-// app.ts
+
+---
+
+### Connection Lifecycle
+
+#### `bm2.connect(): Promise<BM2>`
+
+Connect to the BM2 daemon. If the daemon is not running, it is spawned automatically and the method waits up to 5 seconds for it to become responsive. Returns the `BM2` instance for chaining.
+
+```ts
+const bm2 = new BM2();
+await bm2.connect();
+console.log(`Connected to daemon PID ${bm2.daemonPid}`);
+```
+
+#### `bm2.disconnect(): Promise<void>`
+
+Disconnect from the daemon. This stops any internal polling timers but does not kill the daemon — all managed processes continue running.
+
+```ts
+await bm2.disconnect();
+console.log(bm2.connected); // false
+```
+
+#### `bm2.connected: boolean`
+
+Read-only property indicating whether the client believes the daemon is reachable.
+
+#### `bm2.daemonPid: number | null`
+
+Read-only property containing the PID of the daemon process, or `null` if unknown.
+
+---
+
+### Programmatic Process Management
+
+#### `bm2.start(options: StartOptions): Promise<ProcessState[]>`
+
+Start a new process or process group. The `script` path is automatically resolved to an absolute path. Returns the array of `ProcessState` objects for the started instances.
+
+```ts
+const procs = await bm2.start({
+  script: "./worker.ts",
+  name: "worker",
+  instances: 2,
+  env: { QUEUE: "emails" },
+  maxMemoryRestart: "256M",
+});
+console.log(`Started ${procs.length} instances`);
+```
+
+The `StartOptions` object accepts all the same fields documented in the [Process Options](#process-options) configuration reference.
+
+#### `bm2.startEcosystem(config: EcosystemConfig): Promise<ProcessState[]>`
+
+Start an entire ecosystem configuration. All script paths within the config are resolved to absolute paths before being sent to the daemon.
+
+```ts
+const procs = await bm2.startEcosystem({
+  apps: [
+    { script: "./api.ts", name: "api", instances: 4, port: 3000 },
+    { script: "./worker.ts", name: "worker", instances: 2 },
+  ],
+});
+```
+
+#### `bm2.stop(target?: string | number): Promise<ProcessState[]>`
+
+Stop one or more processes. The `target` can be a process name, numeric ID, namespace, or `"all"`. Defaults to `"all"` when omitted.
+
+```ts
+await bm2.stop("api");       // Stop by name
+await bm2.stop(0);           // Stop by ID
+await bm2.stop();            // Stop all
+```
+
+#### `bm2.restart(target?: string | number): Promise<ProcessState[]>`
+
+Hard restart one or more processes. The process is fully stopped and then re-spawned.
+
+```ts
+await bm2.restart("api");
+await bm2.restart();          // Restart all
+```
+
+#### `bm2.reload(target?: string | number): Promise<ProcessState[]>`
+
+Graceful zero-downtime reload. New instances are started before old ones are stopped, ensuring no dropped requests. Ideal for deploying new code.
+
+```ts
+await bm2.reload("api");
+await bm2.reload();           // Reload all
+```
+
+#### `bm2.delete(target?: string | number): Promise<ProcessState[]>`
+
+Stop and remove one or more processes from BM2's management entirely.
+
+```ts
+await bm2.delete("api");
+await bm2.delete();           // Delete all
+```
+
+#### `bm2.scale(target: string | number, count: number): Promise<ProcessState[]>`
+
+Scale a process group to the specified number of instances. When scaling up, new instances inherit the configuration of existing ones. When scaling down, the highest-numbered instances are removed first.
+
+```ts
+await bm2.scale("api", 8);   // Scale up to 8 instances
+await bm2.scale("api", 2);   // Scale down to 2 instances
+```
+
+#### `bm2.sendSignal(target: string | number, signal: string): Promise<void>`
+
+Send an OS signal to a managed process.
+
+```ts
+await bm2.sendSignal("api", "SIGUSR2");
+await bm2.sendSignal(0, "SIGHUP");
+```
+
+#### `bm2.reset(target?: string | number): Promise<ProcessState[]>`
+
+Reset the restart counter for one or more processes. Defaults to `"all"`.
+
+```ts
+await bm2.reset("api");
+await bm2.reset();            // Reset all
+```
+
+---
+
+### Introspection
+
+#### `bm2.list(): Promise<ProcessState[]>`
+
+List all managed processes with their current state.
+
+```ts
+const processes = await bm2.list();
+for (const proc of processes) {
+  console.log(`${proc.name} [${proc.status}] PID=${proc.pid} CPU=${proc.cpu}%`);
+}
+```
+
+#### `bm2.describe(target: string | number): Promise<ProcessState[]>`
+
+Get detailed information about a specific process or process group.
+
+```ts
+const details = await bm2.describe("api");
+console.log(details[0]);
+```
+
+---
+
+### Logs
+
+#### `bm2.logs(target?: string | number, lines?: number): Promise<Array<{ name: string; id: number; out: string; err: string }>>`
+
+Retrieve recent log lines for one or all processes. Defaults to `"all"` with `20` lines.
+
+```ts
+const logs = await bm2.logs("api", 100);
+for (const entry of logs) {
+  console.log(`[${entry.name}] stdout:\n${entry.out}`);
+  if (entry.err) console.error(`[${entry.name}] stderr:\n${entry.err}`);
+}
+```
+
+#### `bm2.flush(target?: string | number): Promise<void>`
+
+Truncate log files for one or all processes.
+
+```ts
+await bm2.flush("api");      // Flush logs for "api"
+await bm2.flush();            // Flush all logs
+```
+
+---
+
+### Programmatic Monitoring and Metrics
+
+#### `bm2.metrics(): Promise<MetricSnapshot>`
+
+Take a single metrics snapshot containing process-level and system-level telemetry.
+
+```ts
+const snapshot = await bm2.metrics();
+console.log(`System CPU: ${snapshot.system.cpu}%`);
+for (const proc of snapshot.processes) {
+  console.log(`  ${proc.name}: ${proc.memory} bytes, ${proc.cpu}% CPU`);
+}
+```
+
+#### `bm2.metricsHistory(seconds?: number): Promise<MetricSnapshot[]>`
+
+Retrieve historical metric snapshots from the daemon's in-memory ring buffer. The `seconds` parameter controls the look-back window and defaults to `300` (5 minutes). The daemon retains up to 1 hour of per-second snapshots.
+
+```ts
+const history = await bm2.metricsHistory(600);   // Last 10 minutes
+console.log(`Got ${history.length} snapshots`);
+```
+
+#### `bm2.prometheus(): Promise<string>`
+
+Get the current metrics formatted as a Prometheus exposition text string.
+
+```ts
+const text = await bm2.prometheus();
+console.log(text);
+// # HELP bm2_process_cpu CPU usage percentage
+// # TYPE bm2_process_cpu gauge
+// bm2_process_cpu{name="api-0",id="0"} 1.2
+// ...
+```
+
+#### `bm2.startPolling(intervalMs?: number): void`
+
+Start polling the daemon for metrics at a fixed interval and emitting `"metrics"` events. Defaults to `2000` ms. Calling this again replaces the existing polling timer.
+
+```ts
+bm2.on("metrics", (snapshot) => {
+  console.log(`${snapshot.processes.length} processes running`);
+});
+bm2.startPolling(1000);       // Poll every second
+```
+
+#### `bm2.stopPolling(): void`
+
+Stop the metrics polling loop.
+
+```ts
+bm2.stopPolling();
+```
+
+---
+
+### Persistence
+
+#### `bm2.save(): Promise<void>`
+
+Persist the current process list to `~/.bm2/dump.json` so it can be restored later.
+
+```ts
+await bm2.save();
+```
+
+#### `bm2.resurrect(): Promise<ProcessState[]>`
+
+Restore previously saved processes from `~/.bm2/dump.json`.
+
+```ts
+const restored = await bm2.resurrect();
+console.log(`Restored ${restored.length} processes`);
+```
+
+---
+
+### Dashboard Control
+
+#### `bm2.dashboard(port?: number, metricsPort?: number): Promise<{ port: number; metricsPort: number }>`
+
+Start the web dashboard. Defaults to port `9615` for the dashboard and `9616` for the Prometheus metrics endpoint.
+
+```ts
+const { port, metricsPort } = await bm2.dashboard(8080, 8081);
+console.log(`Dashboard: http://localhost:${port}`);
+console.log(`Metrics:   http://localhost:${metricsPort}/metrics`);
+```
+
+#### `bm2.dashboardStop(): Promise<void>`
+
+Stop the web dashboard.
+
+```ts
+await bm2.dashboardStop();
+```
+
+---
+
+### Module Management
+
+#### `bm2.moduleInstall(nameOrPath: string): Promise<{ path: string }>`
+
+Install a BM2 module from a git URL, local path, or npm package name.
+
+```ts
+const result = await bm2.moduleInstall("bm2-prometheus-pushgateway");
+console.log(`Installed to ${result.path}`);
+```
+
+#### `bm2.moduleUninstall(name: string): Promise<void>`
+
+Uninstall a BM2 module.
+
+```ts
+await bm2.moduleUninstall("bm2-prometheus-pushgateway");
+```
+
+#### `bm2.moduleList(): Promise<Array<{ name: string; version: string }>>`
+
+List all installed modules.
+
+```ts
+const modules = await bm2.moduleList();
+for (const mod of modules) {
+  console.log(`${mod.name}@${mod.version}`);
+}
+```
+
+---
+
+### Daemon Lifecycle
+
+#### `bm2.ping(): Promise<{ pid: number; uptime: number }>`
+
+Ping the daemon and return its PID and uptime in milliseconds.
+
+```ts
+const info = await bm2.ping();
+console.log(`Daemon PID ${info.pid}, up for ${Math.round(info.uptime / 1000)}s`);
+```
+
+#### `bm2.kill(): Promise<void>`
+
+Kill the daemon and all managed processes. Cleans up the socket and PID files. The daemon connection will not respond after this call, which is expected.
+
+```ts
+await bm2.kill();
+console.log(bm2.connected); // false
+```
+
+#### `bm2.daemonReload(): Promise<string>`
+
+Reload the daemon server itself without killing managed processes.
+
+```ts
+const result = await bm2.daemonReload();
+console.log(result);
+```
+
+---
+
+### Low-Level Transport
+
+#### `bm2.send(message: DaemonMessage): Promise<DaemonResponse>`
+
+Send an arbitrary message to the daemon over the Unix socket and return the raw response. This is useful for custom command types, future extensions, or direct daemon interaction.
+
+```ts
+const response = await bm2.send({ type: "ping" });
+console.log(response);
+// { success: true, data: { pid: 12345, uptime: 60000 }, id: "abc123" }
+```
+
+Messages are JSON objects with a `type` field for routing and an optional `id` field for request-response correlation (auto-generated if omitted). The `data` field carries command-specific payload.
+
+---
+
+### Events
+
+The `BM2` class extends `EventEmitter` and emits the following typed events:
+
+| Event | Payload | Description |
+|---|---|---|
+| `daemon:connected` | — | Daemon connection established |
+| `daemon:disconnected` | — | Client disconnected from daemon |
+| `daemon:launched` | `pid: number` | Daemon was spawned by this client |
+| `daemon:killed` | — | Daemon was killed via `kill()` |
+| `error` | `error: Error` | Transport or polling error |
+| `process:start` | `processes: ProcessState[]` | Process(es) started |
+| `process:stop` | `processes: ProcessState[]` | Process(es) stopped |
+| `process:restart` | `processes: ProcessState[]` | Process(es) restarted |
+| `process:reload` | `processes: ProcessState[]` | Process(es) reloaded |
+| `process:delete` | `processes: ProcessState[]` | Process(es) deleted |
+| `process:scale` | `processes: ProcessState[]` | Process group scaled |
+| `metrics` | `snapshot: MetricSnapshot` | Metrics snapshot received |
+| `log:data` | `logs: Array<{ name, id, out, err }>` | Log data retrieved |
+
+```ts
+const bm2 = new BM2();
+
+bm2.on("daemon:connected", () => console.log("Connected!"));
+bm2.on("daemon:disconnected", () => console.log("Disconnected"));
+bm2.on("process:start", (procs) => {
+  console.log("Started:", procs.map((p) => p.name).join(", "));
+});
+bm2.on("process:stop", (procs) => {
+  console.log("Stopped:", procs.map((p) => p.name).join(", "));
+});
+bm2.on("error", (err) => console.error("BM2 error:", err.message));
+bm2.on("metrics", (snapshot) => {
+  console.log(`${snapshot.processes.length} processes, system CPU ${snapshot.system.cpu}%`);
+});
+
+await bm2.connect();
+```
+
+---
+
+### Error Handling
+
+All methods that communicate with the daemon throw a `BM2Error` when the daemon returns a failure response. The error includes the command that failed and the full daemon response for inspection.
+
+```ts
+import { BM2Error } from "bm2";
+
+try {
+  await bm2.describe("nonexistent");
+} catch (err) {
+  if (err instanceof BM2Error) {
+    console.error(`Command "${err.command}" failed: ${err.message}`);
+    console.error("Full response:", err.response);
+  }
+}
+```
+
+Transport-level errors (daemon unreachable, socket closed) throw standard `Error` instances.
+
+#### `BM2Error` Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `message` | `string` | Human-readable error message |
+| `command` | `string` | The daemon command type that failed |
+| `response` | `DaemonResponse` | The full response object from the daemon |
+
+---
+
+### Direct ProcessManager Usage
+
+For in-process usage without a running daemon, you can use the `ProcessManager` class directly. This is useful for embedding BM2 into your own application or for custom tooling.
+
+```ts
 import { ProcessManager } from "bm2/process-manager";
 import { Dashboard } from "bm2/dashboard";
 
@@ -1307,6 +1787,8 @@ await pm.resurrect();
 // Stop everything
 await pm.stopAll();
 ```
+
+The `ProcessManager` provides the same process management capabilities but runs in-process rather than communicating with a daemon. Use the `BM2` client class for the standard daemon-based workflow, and `ProcessManager` when you need direct, embedded control.
 
 ---
 
@@ -1474,6 +1956,64 @@ Or manually:
 git pull origin main
 bun install
 bm2 reload all
+```
+
+### Programmatic Monitoring Service
+
+```ts
+import BM2 from "bm2";
+
+const bm2 = new BM2();
+await bm2.connect();
+
+// Alert when any process uses more than 512 MB
+bm2.on("metrics", (snapshot) => {
+  for (const proc of snapshot.processes) {
+    if (proc.memory > 512 * 1024 * 1024) {
+      console.warn(`⚠️  ${proc.name} using ${Math.round(proc.memory / 1024 / 1024)} MB`);
+    }
+  }
+});
+
+bm2.startPolling(5000);
+
+// Keep running
+process.on("SIGINT", async () => {
+  bm2.stopPolling();
+  await bm2.disconnect();
+  process.exit(0);
+});
+```
+
+### Programmatic Deploy Pipeline
+
+```ts
+import BM2 from "bm2";
+
+const bm2 = new BM2();
+await bm2.connect();
+
+// Deploy new code, then reload
+console.log("Reloading all processes...");
+const reloaded = await bm2.reload("all");
+console.log(`Reloaded ${reloaded.length} processes`);
+
+// Verify everything is healthy
+const processes = await bm2.list();
+const allOnline = processes.every((p) => p.status === "online");
+
+if (allOnline) {
+  console.log("✅ All processes online");
+  await bm2.save();
+} else {
+  console.error("❌ Some processes failed to come online");
+  const failed = processes.filter((p) => p.status !== "online");
+  for (const p of failed) {
+    console.error(`  ${p.name}: ${p.status}`);
+  }
+}
+
+await bm2.disconnect();
 ```
 
 ---
