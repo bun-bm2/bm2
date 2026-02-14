@@ -84,6 +84,7 @@ function minimalBorders() {
 // ---------- Table Printer ----------
 
 export function printProcessTable(processes: ProcessState[]) {
+  
   console.log("");
   console.log(color("BM2 — Bun Process Manager", "bold"));
   console.log(color("─────────────────────────────────────────────", "dim"));
@@ -133,7 +134,7 @@ export function printProcessTable(processes: ProcessState[]) {
 }
 
 
-export function liveWatchProcess(processes: ProcessState[], interval = 1000) {
+export function liveWatchProcess(processes: ProcessState[], interval = 5_000) {
   let sortBy: "cpu" | "mem" | "uptime" | "default" = "default";
 
   // Clear console helper
