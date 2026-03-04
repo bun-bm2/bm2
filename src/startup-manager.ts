@@ -15,7 +15,8 @@
  */
  
  import { join } from "path";
- 
+ import { $ } from "bun";
+
  export class StartupManager {
    async generate(platform?: string): Promise<string> {
      const os = platform || process.platform;
@@ -59,7 +60,7 @@ ExecStop=${bunPath} run ${bm2Path} kill
 WantedBy=multi-user.target
 `;
    
-     const servicePath = "/etc/systemd/system/bm2.service";
+const servicePath = "/etc/systemd/system/bm2.service";
 return `# BM2 Systemd Service
 # Save to: ${servicePath}
 # Then run:
@@ -101,29 +102,41 @@ ${unit}`;
  </dict>
  </plist>`;
  
-     const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
-     return `# BM2 LaunchAgent (macOS)
- # Save to: ${plistPath}
- # Then run:
- #   launchctl load ${plistPath}
+const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+
+return `# BM2 LaunchAgent (macOS)
+# Save to: ${plistPath}
+# Then run:
+# launchctl load ${plistPath}
  
- ${plist}`;
-   }
+${plist}`;
+}
  
    async install(): Promise<string> {
      const os = process.platform;
      const content = await this.generate(os);
  
      if (os === "linux") {
+       
        const servicePath = "/etc/systemd/system/bm2.service";
-       // Extract just the unit content
-       //const unitContent = content.split("\n\n").slice(1).join("\n\n");
-       await Bun.write(servicePath, content);
+       
+       const unitStart = content.indexOf("[Unit]");
+       const unitContent = content.substring(unitStart);
+       
+       try {
+         await Bun.write(servicePath, unitContent);
+       } catch {
+         return "Failed to create the service file. Please ensure you have sufficient permissions (try running with sudo).";
+       }
+       
+      // Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" }).exited;
+      // Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" }).exited;
+       
+       await $`systemctl daemon-reload`;
+       await $`systemctl enable bm2`;
+       await $`systemctl start bm2`;
  
-       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" }).exited;
-       Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" }).exited;
- 
-       return `Service installed at ${servicePath}\nRun: sudo systemctl start bm2`;
+       return `Service installed at ${servicePath}`;
      } else if (os === "darwin") {
        const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
        // Extract plist content
@@ -141,17 +154,21 @@ ${unit}`;
      const os = process.platform;
  
      if (os === "linux") {
-       Bun.spawn(["sudo", "systemctl", "stop", "bm2"], { stdout: "inherit" });
-       Bun.spawn(["sudo", "systemctl", "disable", "bm2"], { stdout: "inherit" });
-       const { unlinkSync } = require("fs");
-       try { unlinkSync("/etc/systemd/system/bm2.service"); } catch {}
-       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" });
+       
+       await $`systemctl stop bm2`;
+       await $`systemctl disable bm2`;
+              
+       await $`rm -f /etc/systemd/system/bm2.service`;
+       await $`systemctl daemon-reload`;
+      
        return "BM2 service removed";
+     
      } else if (os === "darwin") {
+       
        const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
-       Bun.spawn(["launchctl", "unload", plistPath], { stdout: "inherit" });
-       const { unlinkSync } = require("fs");
-       try { unlinkSync(plistPath); } catch {}
+       
+       await $`launchctl unload ${plistPath}`;
+       await $`rm -f ${plistPath}`;
        return "BM2 launch agent removed";
      }
  
