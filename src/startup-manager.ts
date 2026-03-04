@@ -120,8 +120,8 @@ ${unit}`;
        //const unitContent = content.split("\n\n").slice(1).join("\n\n");
        await Bun.write(servicePath, content);
  
-       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" });
-       Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" });
+       Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" }).exited;
+       Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" }).exited;
  
        return `Service installed at ${servicePath}\nRun: sudo systemctl start bm2`;
      } else if (os === "darwin") {
