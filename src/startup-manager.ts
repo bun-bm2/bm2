@@ -34,28 +34,30 @@
    }
  
    private generateSystemd(bunPath: string, bm2Path: string, daemonPath: string): string {
+     
      const unit = `[Unit]
-   Description=BM2 Process Manager
-   Documentation=https://github.com/bm2
-   After=network.target
-   
-   [Service]
-   Type=simple
-   User=${process.env.USER || "root"}
-   LimitNOFILE=infinity
-   LimitNPROC=infinity
-   LimitCORE=infinity
-   Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${join(bunPath, "..")}
-   Environment=BM2_HOME=${join(process.env.HOME || "/root", ".bm2")}
-   Restart=on-failure
-   
-   ExecStart=${bunPath} run ${daemonPath}
-   ExecStartPost=${bunPath} run ${bm2Path} resurrect
-   ExecReload=${bunPath} run ${bm2Path} reload all
-   ExecStop=${bunPath} run ${bm2Path} kill
-   
-   [Install]
-   WantedBy=multi-user.target`;
+Description=BM2 Process Manager
+Documentation=https://github.com/bm2
+After=network.target
+
+[Service]
+Type=simple
+User=${process.env.USER || "root"}
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${join(bunPath, "..")}
+Environment=BM2_HOME=${join(process.env.HOME || "/root", ".bm2")}
+Restart=on-failure
+
+ExecStart=${bunPath} run ${daemonPath}
+ExecStartPost=${bunPath} run ${bm2Path} resurrect
+ExecReload=${bunPath} run ${bm2Path} reload all
+ExecStop=${bunPath} run ${bm2Path} kill
+
+[Install]
+WantedBy=multi-user.target
+`;
    
      const servicePath = "/etc/systemd/system/bm2.service";
 return `# BM2 Systemd Service
