@@ -58,15 +58,15 @@
    WantedBy=multi-user.target`;
    
      const servicePath = "/etc/systemd/system/bm2.service";
-     return `# BM2 Systemd Service
-   # Save to: ${servicePath}
-   # Then run:
-   #   sudo systemctl daemon-reload
-   #   sudo systemctl enable bm2
-   #   sudo systemctl start bm2
-   
-   ${unit}`;
-   }
+return `# BM2 Systemd Service
+# Save to: ${servicePath}
+# Then run:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable bm2
+#   sudo systemctl start bm2
+
+${unit}`;
+}
  
    private generateLaunchd(bunPath: string, bm2Path: string, daemonPath: string): string {
      const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -115,8 +115,8 @@
      if (os === "linux") {
        const servicePath = "/etc/systemd/system/bm2.service";
        // Extract just the unit content
-       const unitContent = content.split("\n\n").slice(1).join("\n\n");
-       await Bun.write(servicePath, unitContent);
+       //const unitContent = content.split("\n\n").slice(1).join("\n\n");
+       await Bun.write(servicePath, content);
  
        Bun.spawn(["sudo", "systemctl", "daemon-reload"], { stdout: "inherit" });
        Bun.spawn(["sudo", "systemctl", "enable", "bm2"], { stdout: "inherit" });
