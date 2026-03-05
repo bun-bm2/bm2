@@ -106,6 +106,8 @@ export function printProcessTable(processes: ProcessState[]) {
     style: { border: ["dim"] },
     chars: minimalBorders(),
   });
+  
+  //console.log("processes===>", processes)
 
   for (const p of processes) {
     const cpu = p.monit?.cpu ?? 0;
@@ -158,6 +160,7 @@ export function liveWatchProcess(processes: ProcessState[], interval = 5_000) {
   // Render table
   const render = () => {
     clear();
+    
     printProcessTable(getSortedProcesses());
     
     console.log(color("─".repeat(50), "dim"));

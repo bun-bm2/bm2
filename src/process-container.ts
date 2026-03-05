@@ -32,6 +32,9 @@ import {
   DEFAULT_LOG_MAX_SIZE,
   DEFAULT_LOG_RETAIN,
 } from "./constants";
+import pidusage from "pidusage";
+import { readdir } from "node:fs/promises";
+
 
 export class ProcessContainer {
   public id: number;
@@ -238,42 +241,37 @@ export class ProcessContainer {
     } catch {}
   }
 
+  
   private startMonitoring() {
-    this.monitorInterval = setInterval(async () => {
-      if (!this.pid || this.status !== "online") return;
-
-      try {
-        if (process.platform === "linux") {
-          const statusFile = Bun.file(`/proc/${this.pid}/status`);
-          if (await statusFile.exists()) {
-            const content = await statusFile.text();
-            const vmRss = content.match(/VmRSS:\s+(\d+)\s+kB/);
-            if (vmRss) this.memory = parseInt(vmRss[1]!) * 1024;
+      this.monitorInterval = setInterval(async () => {
+        
+        if (!this.pid || this.status !== "online") return;
+  
+        try {
+          
+          // 1. Fetch cross-platform CPU and Memory usage
+          const stats = await pidusage(this.pid);
+          
+          // pidusage returns memory directly in bytes and cpu as a percentage
+          this.memory = stats.memory; 
+          this.cpu = stats.cpu;
+  
+          // 2. Track file descriptors (handles) on Linux
+          // (pidusage does not provide this metric, so we keep the original logic)
+          if (process.platform === "linux") {
+            try {
+              this.handles = (await readdir(`/proc/${this.pid}/fd`)).length;
+            } catch {}
           }
-
-          try {
-            const { readdirSync } = require("fs");
-            this.handles = readdirSync(`/proc/${this.pid}/fd`).length;
-          } catch {}
-        } else {
-          const ps = Bun.spawn(["ps", "-o", "rss=,pcpu=", "-p", String(this.pid)], {
-            stdout: "pipe", stderr: "pipe",
-          });
-          const output = await new Response(ps.stdout).text();
-          const parts = output.trim().split(/\s+/);
-          if (parts.length >= 2) {
-            this.memory = parseInt(parts[0]!) * 1024;
-            this.cpu = parseFloat(parts[1]!);
+  
+          // 3. Max memory restart
+          if (this.config.maxMemoryRestart && this.memory > this.config.maxMemoryRestart) {
+            console.log(`[bm2] ${this.name} exceeded memory limit (${this.memory} > ${this.config.maxMemoryRestart}), restarting...`);
+            await this.restart();
           }
-        }
-
-        // Max memory restart
-        if (this.config.maxMemoryRestart && this.memory > this.config.maxMemoryRestart) {
-          console.log(`[bm2] ${this.name} exceeded memory limit (${this.memory} > ${this.config.maxMemoryRestart}), restarting...`);
-          await this.restart();
-        }
-      } catch {}
-    }, MONITOR_INTERVAL);
+          
+        } catch {}
+      }, MONITOR_INTERVAL);
   }
 
   private startLogRotation(logPaths: { outFile: string; errFile: string }) {
