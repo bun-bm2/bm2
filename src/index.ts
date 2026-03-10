@@ -16,7 +16,7 @@
  */
 
 import { existsSync, readFileSync, unlinkSync } from "fs";
-import { resolve, join, extname } from "path";
+import path, { resolve, join, extname } from "path";
 import {
   APP_NAME,
   VERSION,
@@ -149,13 +149,25 @@ async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
   }
 
   const ext = extname(abs);
+  
+  let config;
+  
   if (ext === ".json") {
-    return await Bun.file(abs).json();
+    config = await Bun.file(abs).json() as EcosystemConfig;
   }
 
   // .ts, .js, .mjs — dynamic import
   const mod = await import(abs);
-  return mod.default || mod;
+  config = (mod.default || mod) as EcosystemConfig;
+  
+  const cwd = path.dirname(abs);
+  
+  config.apps = config.apps.map(i => {
+    if ((i.cwd || "").trim() == "") i.cwd = cwd
+    return i;
+  })
+  
+  return config
 }
 
 // ---------------------------------------------------------------------------
@@ -333,8 +345,8 @@ async function cmdStart(args: string[]) {
     scriptOrConfig.includes("bm2.config") || 
     scriptOrConfig.includes("pm2.config")
   ) {
-    const config = await loadEcosystemConfig(scriptOrConfig);
-    const res = await sendToDaemon({ type: "ecosystem", data: config });
+    const {config, cwd } = await loadEcosystemConfig(scriptOrConfig);
+    const res = await sendToDaemon({ type: "ecosystem", data: { config, cwd } });
     if (!res.success) {
       console.error(colorize(`Error: ${res.error}`, "red"));
       process.exit(1);
@@ -346,8 +358,10 @@ async function cmdStart(args: string[]) {
   // Single script
   const opts = parseStartFlags(args.slice(1), resolve(scriptOrConfig));
   opts.script = resolve(scriptOrConfig);
+  
+  const cwd = path.dirname(opts.script);
 
-  const res = await sendToDaemon({ type: "start", data: opts });
+  const res = await sendToDaemon({ type: "start", data: { config: opts, cwd } });
   if (!res.success) {
     console.error(colorize(`Error: ${res.error}`, "red"));
     process.exit(1);
@@ -681,7 +695,7 @@ async function cmdDeploy(args: string[]) {
     process.exit(1);
   }
 
-  const config = await loadEcosystemConfig(configFile);
+  const {config, cwd } = await loadEcosystemConfig(configFile);
   if (!config.deploy || !config.deploy[environment]) {
     console.error(colorize(`Deploy environment "${environment}" not found in config`, "red"));
     process.exit(1);
