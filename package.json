@@ -1,6 +1,6 @@
 {
   "name": "bm2",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "A blazing-fast, full-featured process manager built entirely on Bun native APIs. The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.",
   "main": "src/api.ts",
   "module": "src/api.ts",
