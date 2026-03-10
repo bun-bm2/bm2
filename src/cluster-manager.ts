@@ -13,11 +13,12 @@
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
- import type { Subprocess } from "bun";
- import type { ProcessDescription } from "./types";
- import { getCpuCount } from "./utils";
+import type { Subprocess } from "bun";
+import type { ProcessDescription } from "./types";
+import { getCpuCount } from "./utils";
+import path from "path"
  
- export class ClusterManager {
+export class ClusterManager {
    private workers: Map<number, Map<number, Subprocess>> = new Map();
  
    resolveInstances(instances: number | string | undefined): number {
@@ -67,7 +68,7 @@
        cmd.push(...config.nodeArgs);
      }
  
-     cmd.push(config.script);
+     cmd.push(path.resolve(config.script));
      if (config.args?.length) cmd.push(...config.args);
  
      return cmd;
