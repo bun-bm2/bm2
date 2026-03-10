@@ -35,9 +35,8 @@
    DEFAULT_RESTART_DELAY,
    DEFAULT_LOG_MAX_SIZE,
    DEFAULT_LOG_RETAIN,
-} from "./constants";
+ } from "./constants";
 import path from "path";
-
  
  export class ProcessManager {
    private processes: Map<number, ProcessContainer> = new Map();
@@ -63,12 +62,16 @@ import path from "path";
     const resolvedInstances = this.clusterManager.resolveInstances(options.instances);
     const isCluster = options.execMode === "cluster" || resolvedInstances > 1;
     const states: ProcessState[] = [];
+    
+    options.script = path.resolve(options.script);
+    
+    if (!(await Bun.file(options.script).exists())) {
+      throw new Error(`Script not found: ${options.script}`);
+    }
 
     if (isCluster) {
       // In cluster mode, each instance is a separate container
       for (let i = 0; i < resolvedInstances; i++) {
-        
-        options.script = path.resolve(options.script);
           
         const id = this.nextId++;
         const baseName = options.name || options.script.split("/").pop()?.replace(/\.\w+$/, "") || `app-${id}`;
@@ -81,7 +84,7 @@ import path from "path";
           config,
           this.logManager,
           this.clusterManager,
-          this.healthChecker,
+          this.healthChecker, 
           this.cronManager
         );
 
@@ -117,15 +120,10 @@ import path from "path";
      instances: number,
      workerIndex: number
    ): ProcessDescription {
-     
-     const script = path.isAbsolute(options.script)
-       ? options.script
-       : path.resolve(process.cwd(), options.script);
-     
      return {
        id,
        name,
-       script,
+       script: options.script,
        args: options.args || [],
        cwd: options.cwd || process.cwd(),
        env: {
