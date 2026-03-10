@@ -697,7 +697,8 @@ async function cmdDeploy(args: string[]) {
     process.exit(1);
   }
 
-  const {config, cwd } = await loadEcosystemConfig(configFile);
+  const config = await loadEcosystemConfig(configFile);
+  
   if (!config.deploy || !config.deploy[environment]) {
     console.error(colorize(`Deploy environment "${environment}" not found in config`, "red"));
     process.exit(1);
