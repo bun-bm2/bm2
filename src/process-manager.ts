@@ -63,8 +63,10 @@ import path from "path";
     const isCluster = options.execMode === "cluster" || resolvedInstances > 1;
     const states: ProcessState[] = [];
     
-    options.script = path.resolve(options.script);
-    
+    options.script = path.isAbsolute(options.script) 
+      ? options.script
+      : path.resolve(process.cwd(), options.script);
+        
     if (!(await Bun.file(options.script).exists())) {
       throw new Error(`Script not found: ${options.script}`);
     }
