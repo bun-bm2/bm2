@@ -161,12 +161,14 @@ async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
   }
   
   const cwd = path.dirname(abs);
-  
+    
   config.apps = config.apps.map(i => {
     if ((i.cwd || "").trim() == "") i.cwd = cwd
     return i;
   })
   
+  //console.log("config===>", config.apps)
+
   return config
 }
 
@@ -345,8 +347,8 @@ async function cmdStart(args: string[]) {
     scriptOrConfig.includes("bm2.config") || 
     scriptOrConfig.includes("pm2.config")
   ) {
-    const {config, cwd } = await loadEcosystemConfig(scriptOrConfig);
-    const res = await sendToDaemon({ type: "ecosystem", data: { config, cwd } });
+    const config = await loadEcosystemConfig(scriptOrConfig);
+    const res = await sendToDaemon({ type: "ecosystem", data: config });
     if (!res.success) {
       console.error(colorize(`Error: ${res.error}`, "red"));
       process.exit(1);
