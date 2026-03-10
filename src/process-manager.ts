@@ -67,6 +67,8 @@ import path from "path";
     if (isCluster) {
       // In cluster mode, each instance is a separate container
       for (let i = 0; i < resolvedInstances; i++) {
+        
+        options.script = path.resolve(options.script);
           
         const id = this.nextId++;
         const baseName = options.name || options.script.split("/").pop()?.replace(/\.\w+$/, "") || `app-${id}`;
