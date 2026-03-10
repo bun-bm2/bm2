@@ -13,9 +13,10 @@
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
- 
+
 import { join, dirname } from "path";
-import { existsSync, readdirSync, unlinkSync, renameSync, statSync } from "fs";
+import { openSync, readSync, closeSync } from "fs";
+import { appendFile, stat, rename, unlink, readdir, access } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type { LogRotateOptions } from "./types";
 
@@ -56,11 +57,12 @@ export class LogManager {
     this.flushTimers.delete(filePath);
 
     try {
-      const file = Bun.file(filePath);
-      const existing = (await file.exists()) ? await file.text() : "";
-      await Bun.write(filePath, existing + content);
+      // Use appendFile (O_APPEND) instead of read-entire-file-then-rewrite.
+      // The old Bun.write approach pulled the whole log into a JS string on
+      // every flush — O(file size) memory per flush, quadratic overall.
+      // appendFile seeks to EOF at the kernel level and writes only new bytes.
+      await appendFile(filePath, content, { encoding: "utf8" });
     } catch (err) {
-      // If file too large, log the error
       console.error(`[bm2] Failed to write log: ${filePath}`, err);
     }
   }
@@ -120,14 +122,29 @@ export class LogManager {
       try {
         const f = Bun.file(filePath);
         if (!(await f.exists())) return;
+
         const currentSize = f.size;
-        if (currentSize > lastSize) {
-          const text = await f.text();
-          const newContent = text.substring(lastSize);
-          lastSize = currentSize;
-          for (const line of newContent.split("\n").filter(Boolean)) {
-            callback(line);
-          }
+        if (currentSize <= lastSize) return;
+
+        const byteLength = currentSize - lastSize;
+
+        // Read only the new bytes via fs.readSync to avoid:
+        //   1. Loading the entire file into memory on every poll.
+        //   2. Slicing by character offset (lastSize) on a UTF-8 string,
+        //      which silently corrupts multi-byte sequences.
+        const buf = Buffer.allocUnsafe(byteLength);
+        const fd = openSync(filePath, "r");
+        try {
+          readSync(fd, buf, 0, byteLength, lastSize);
+        } finally {
+          closeSync(fd);
+        }
+
+        lastSize = currentSize;
+
+        const newContent = new TextDecoder().decode(buf);
+        for (const line of newContent.split("\n").filter(Boolean)) {
+          callback(line);
         }
       } catch {}
     }, 500);
@@ -138,43 +155,55 @@ export class LogManager {
       const file = Bun.file(filePath);
       if (!(await file.exists())) return;
 
-      const stat = statSync(filePath);
-      if (stat.size < options.maxSize) return;
+      // Async stat — no thread-blocking syscall on the main event loop
+      const fileStat = await stat(filePath);
+      if (fileStat.size < options.maxSize) return;
 
-      // Rotate files
+      // Rotate files: shift .N → .N+1, filePath → .1
       for (let i = options.retain - 1; i >= 1; i--) {
         const src = i === 1 ? filePath : `${filePath}.${i - 1}`;
         const dst = `${filePath}.${i}`;
-        if (existsSync(src)) {
-          renameSync(src, dst);
 
-          if (options.compress && i > 0) {
-            // Compress rotated file using Bun's gzip
-            try {
-              const content = await Bun.file(dst).arrayBuffer();
-              const compressed = Bun.gzipSync(new Uint8Array(content));
-              await Bun.write(`${dst}.gz`, compressed);
-              unlinkSync(dst);
-            } catch {}
+        const srcExists = await access(src).then(() => true).catch(() => false);
+        if (!srcExists) continue;
+
+        await rename(src, dst);
+
+        if (options.compress) {
+          // Spawn the system `gzip` binary as a background subprocess so
+          // compression never blocks the JS event loop. gzip -f replaces
+          // `dst` with `dst.gz` in-place, matching the old .gz naming.
+          try {
+            const proc = Bun.spawn(["gzip", "-f", dst], {
+              stdout: "ignore",
+              stderr: "pipe",
+            });
+            const exitCode = await proc.exited;
+            if (exitCode !== 0) {
+              const errText = await new Response(proc.stderr).text();
+              console.error(`[bm2] gzip failed for ${dst}: ${errText.trim()}`);
+            }
+          } catch (compressErr) {
+            console.error(`[bm2] Failed to compress rotated log ${dst}:`, compressErr);
           }
         }
       }
 
-      // Clean excess rotated files
+      // Clean excess rotated files asynchronously
       const dir = dirname(filePath);
       const baseName = filePath.split("/").pop()!;
       try {
-        const files = readdirSync(dir);
+        const files = await readdir(dir);
         const rotated = files
           .filter((f) => f.startsWith(baseName + "."))
           .sort()
           .reverse();
-        for (let i = options.retain; i < rotated.length; i++) {
-          unlinkSync(join(dir, rotated[i]!));
-        }
+        await Promise.all(
+          rotated.slice(options.retain).map((f) => unlink(join(dir, f)).catch(() => {}))
+        );
       } catch {}
 
-      // Truncate original
+      // Truncate original to reclaim inode while keeping it open for writers
       await Bun.write(filePath, "");
     } catch (err) {
       console.error(`[bm2] Log rotation failed for ${filePath}:`, err);

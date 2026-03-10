@@ -227,18 +227,57 @@ export class ProcessContainer {
 
   private async pipeStream(stream: ReadableStream<Uint8Array>, filePath: string) {
     const reader = stream.getReader();
+    const decoder = new TextDecoder();
+
+    // Holds the tail of the last chunk if it did not end on a newline.
+    // Without this, a chunk boundary mid-word (e.g. "hel" / "lo\n") would be
+    // written as two separate log lines, corrupting the output.
+    let remainder = "";
+
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        const text = new TextDecoder().decode(value);
-        const timestamp = new Date().toISOString();
-        const lines = text.split("\n").filter(Boolean);
-        for (const line of lines) {
-          await this.logManager.appendLog(filePath, `[${timestamp}] ${line}\n`);
+
+        if (done) {
+          // Flush any buffered content that was never terminated with \n
+          if (remainder.length > 0) {
+            const timestamp = new Date().toISOString();
+            await this.logManager.appendLog(filePath, `[${timestamp}] ${remainder}\n`);
+            remainder = "";
+          }
+          break;
         }
+
+        // stream=true tells the decoder to hold multi-byte UTF-8 sequences
+        // that straddle chunk boundaries rather than emitting replacement chars.
+        const chunk = decoder.decode(value, { stream: true });
+
+        // Prepend any leftover from the previous chunk before splitting.
+        // This is a single string allocation per chunk (not per line), so
+        // allocation pressure stays O(chunk size) rather than O(line count).
+        const text = remainder + chunk;
+        const lines = text.split("\n");
+
+        // The last element is either "" (chunk ended on \n) or an incomplete
+        // line. Either way, hold it back for the next iteration.
+        remainder = lines.pop()!;
+
+        if (lines.length === 0) continue;
+
+        const timestamp = new Date().toISOString();
+        // Build a single string for all complete lines in this chunk so
+        // appendLog (and the underlying O_APPEND write) is called once per
+        // chunk, not once per line.
+        const output = lines.map((line) => `[${timestamp}] ${line}\n`).join("");
+        await this.logManager.appendLog(filePath, output);
       }
-    } catch {}
+    } catch {
+      // Flush remainder on unexpected stream error
+      if (remainder.length > 0) {
+        const timestamp = new Date().toISOString();
+        await this.logManager.appendLog(filePath, `[${timestamp}] ${remainder}\n`).catch(() => {});
+      }
+    }
   }
 
   

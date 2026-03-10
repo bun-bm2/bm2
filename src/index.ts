@@ -141,7 +141,9 @@ async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
 // ---------------------------------------------------------------------------
 
 async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
+  
   const abs = resolve(filePath);
+  
   if (!existsSync(abs)) {
     throw new Error(`Ecosystem file not found: ${abs}`);
   }

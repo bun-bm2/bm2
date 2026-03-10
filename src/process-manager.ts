@@ -35,7 +35,9 @@
    DEFAULT_RESTART_DELAY,
    DEFAULT_LOG_MAX_SIZE,
    DEFAULT_LOG_RETAIN,
- } from "./constants";
+} from "./constants";
+import path from "path";
+
  
  export class ProcessManager {
    private processes: Map<number, ProcessContainer> = new Map();
@@ -73,8 +75,12 @@
         const config = this.buildConfig(id, name, options, resolvedInstances, i);
         
         const container = new ProcessContainer(
-          id, config, this.logManager, this.clusterManager,
-          this.healthChecker, this.cronManager
+          id,
+          config,
+          this.logManager,
+          this.clusterManager,
+          this.healthChecker,
+          this.cronManager
         );
 
         this.processes.set(id, container);
@@ -109,10 +115,15 @@
      instances: number,
      workerIndex: number
    ): ProcessDescription {
+     
+     const script = path.isAbsolute(options.script)
+       ? options.script
+       : path.resolve(process.cwd(), options.script);
+     
      return {
        id,
        name,
-       script: options.script,
+       script,
        args: options.args || [],
        cwd: options.cwd || process.cwd(),
        env: {
