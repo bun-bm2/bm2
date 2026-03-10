@@ -153,12 +153,12 @@ async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
   let config;
   
   if (ext === ".json") {
-    config = await Bun.file(abs).json() as EcosystemConfig;
+    config = (await Bun.file(abs).json()) as EcosystemConfig;
+  } else {
+    // .ts, .js, .mjs — dynamic import
+    const mod = await import(abs);
+    config = (mod.default || mod) as EcosystemConfig;
   }
-
-  // .ts, .js, .mjs — dynamic import
-  const mod = await import(abs);
-  config = (mod.default || mod) as EcosystemConfig;
   
   const cwd = path.dirname(abs);
   
