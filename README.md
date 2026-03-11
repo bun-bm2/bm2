@@ -451,43 +451,66 @@ bm2 reset all
 
 Cluster mode spawns multiple instances of your application, each running in its own process. This is ideal for CPU-bound workloads and for taking full advantage of multi-core servers.
 
-```
+```bash
 bm2 start server.ts --name api --instances max
-```
 
 ```
+
+```bash
 bm2 start server.ts --name api --instances 4
-```
 
 ```
+
+```bash
 bm2 start server.ts --name api --instances 4 --port 3000
+
 ```
+
+#### ⚠️ Current Status & Limitations
+
+While `bm2` provides the orchestration for clustering, please note that **Bun’s native cluster implementation is currently limited by the underlying OS:**
+
+* **Linux Only:** Port sharing via `reusePort` is only fully supported on **Linux**.
+* **macOS & Windows:** Due to OS-level limitations with `SO_REUSEPORT`, these platforms ignore the `reusePort` option. On these systems, clustering may result in "Address already in use" errors if attempting to bind multiple workers to the same port.
+
+`bm2` leverages the native [Bun.serve cluster logic](https://www.google.com/search?q=https://bun.sh/docs/api/http%23cluster) to ensure maximum performance, but it remains subject to the runtime's maturity.
+
+
+#### Environment Variables
 
 Each cluster worker receives the following environment variables:
 
 | Variable | Description |
-|---|---|
+| --- | --- |
 | `BM2_CLUSTER` | Set to `"true"` in cluster mode |
 | `BM2_WORKER_ID` | Zero-indexed worker ID |
 | `BM2_INSTANCES` | Total number of instances |
 | `NODE_APP_INSTANCE` | Same as `BM2_WORKER_ID` (PM2 compatibility) |
 | `PORT` | `basePort + workerIndex` (if `--port` is specified) |
 
-Example application using cluster-aware port binding:
+---
 
-```
+#### Example: Cluster-Aware Port Binding
+
+To enable clustering in Bun, you must explicitly set `reusePort: true`. This allows multiple processes to listen on the same port (on supported OSs).
+
+```typescript
 // server.ts
 const workerId = parseInt(process.env.BM2_WORKER_ID || "0");
 const port = parseInt(process.env.PORT || "3000");
 
 Bun.serve({
   port,
+  // Share the same port across multiple processes
+  // This is the important part!
+  reusePort: true, 
   fetch(req) {
     return new Response(`Hello from worker ${workerId} on port ${port}`);
   },
 });
 
 console.log(`Worker ${workerId} listening on :${port}`);
+
 ```
 
 ---

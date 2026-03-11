@@ -94,6 +94,7 @@ import path from "path";
         await container.start();
         states.push(container.getState());
       }
+      
     } else {
       const id = this.nextId++;
       const name =
@@ -103,8 +104,11 @@ import path from "path";
   
       const config = this.buildConfig(id, name, options, 1, 0);
       const container = new ProcessContainer(
-          id, config, this.logManager, this.clusterManager,
-          this.healthChecker, this.cronManager
+        id, config,
+        this.logManager,
+        this.clusterManager,
+        this.healthChecker,
+        this.cronManager
       );
   
       this.processes.set(id, container);
