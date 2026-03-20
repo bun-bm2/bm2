@@ -366,7 +366,10 @@ async function cmdStart(args: string[]) {
   
   const cwd = path.dirname(opts.script);
   
-  const res = await sendToDaemon({ type: "start", data: { config: opts, cwd } });
+  opts.cwd = cwd;
+  
+  const res = await sendToDaemon({ type: "start", data: opts });
+  
   if (!res.success) {
     console.error(colorize(`Error: ${res.error}`, "red"));
     process.exit(1);
