@@ -52,6 +52,7 @@ ensureDirs();
 // Daemon communication helpers
 // ---------------------------------------------------------------------------
 
+
 function isDaemonRunning(): boolean {
   if (!existsSync(DAEMON_PID_FILE)) return false;
   try {
@@ -96,6 +97,25 @@ async function startDaemon(): Promise<void> {
   
   if (!isDaemonRunning()) {
     throw new Error("Daemon failed to start (socket not found after 5 s)");
+  }
+}
+
+async function stopDaemon(): Promise<void> {
+  try {
+    
+    if (!isDaemonRunning()) return;
+    
+    const pidText = await Bun.file(DAEMON_PID_FILE).text();
+    const pid = Number(pidText);
+
+    process.kill(pid, "SIGTERM"); // graceful stop
+
+    console.error("Daemon stopped");
+
+    // cleanup
+    await Bun.write(DAEMON_PID_FILE, "");
+  } catch (err) {
+    console.error("Failed to stop daemon:", err);
   }
 }
 
@@ -853,29 +873,42 @@ async function cmdModule(args: string[]) {
 }
 
 async function cmdDaemon(args: string[]) {
-  const subCmd = args[0];
-  let type;
+ 
   
-  switch (subCmd) {
-    case "reload":
-      type = "daemonReload"
-      break;
-    default:
-      console.error(colorize("Usage: bm2 daemon <reload>", "red"));
-      process.exit(1);
-  }
-  
-  const res = await sendToDaemon({ type });
+  const daemonStatus = () => {
+    if (isDaemonRunning()) {
+      console.log(colorize("running", "green"));
+    } else {
+      console.error(colorize("stopped", "red"));
+    }
     
-  if (res?.error) {
-    console.error(colorize(`Error: ${res.error}`, "red"));
     process.exit(1);
   }
   
-  console.log(colorize(res.data, "green"));
+  const subCmd = args[0];
   
-  process.exit(1);
-  
+  switch (subCmd) {
+    case "status":
+      daemonStatus();
+      break;
+    case "start":
+      await startDaemon();
+      process.exit(1);
+      break
+    case "stop":
+      await stopDaemon();
+      process.exit(1);
+      break;
+    case "reload":
+      await stopDaemon();
+      await startDaemon();
+      process.exit(1);
+      break;
+    default:
+      console.error(colorize("Usage: bm2 daemon <status|start|stop|reload>", "red"));
+      process.exit(1);
+  }
+    
 }
 
 async function cmdPrometheus() {
