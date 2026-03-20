@@ -41,6 +41,7 @@ import type {
 } from "./types";
 import { statusColor } from "./colors";
 import { liveWatchProcess, printProcessTable } from "./process-table";
+import { exists } from "fs/promises";
 
 // ---------------------------------------------------------------------------
 // Ensure directory structure exists
@@ -143,8 +144,10 @@ async function sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
 async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
   
   const abs = resolve(filePath);
+ 
+  const file = Bun.file(abs);
   
-  if (!existsSync(abs)) {
+  if (!(await file.exists())) {
     throw new Error(`Ecosystem file not found: ${abs}`);
   }
 
@@ -153,7 +156,7 @@ async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
   let config;
   
   if (ext === ".json") {
-    config = (await Bun.file(abs).json()) as EcosystemConfig;
+    config = (await file.json()) as EcosystemConfig;
   } else {
     // .ts, .js, .mjs — dynamic import
     const mod = await import(abs);
@@ -362,8 +365,11 @@ async function cmdStart(args: string[]) {
   opts.script = resolve(scriptOrConfig);
   
   const cwd = path.dirname(opts.script);
-
-  const res = await sendToDaemon({ type: "start", data: { config: opts, cwd } });
+  
+  opts.cwd = cwd;
+  
+  const res = await sendToDaemon({ type: "start", data: opts });
+  
   if (!res.success) {
     console.error(colorize(`Error: ${res.error}`, "red"));
     process.exit(1);

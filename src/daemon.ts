@@ -35,6 +35,11 @@ const pm = new ProcessManager();
 const dashboard = new Dashboard(pm);
 const moduleManager = new ModuleManager(pm);
 
+const args = process.argv.slice(2);
+
+// Checks if '--debug' exists anywhere in the arguments
+const debugMode = args.includes('--debug');
+
 // Clean up existing socket
 if (existsSync(DAEMON_SOCKET)) {
   try { unlinkSync(DAEMON_SOCKET); } catch {}
@@ -223,8 +228,13 @@ async function handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
       default:
         return { type: "error", error: `Unknown command: ${msg.type}`, success: false, id: msg.id };
     }
-  } catch (err: any) {
-    return { type: "error", error: err.message, success: false, id: msg.id };
+  } catch (err: Error | any) {
+    let error = err.message;
+    if (debugMode) {
+      error = `Message: ${err.message}\nStack: ${err.stack}` 
+      console.error(err, err.stack)
+    }
+    return { type: "error", error, success: false, id: msg.id };
   }
 }
 

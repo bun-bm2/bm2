@@ -66,11 +66,12 @@ import path from "path";
     options.script = path.isAbsolute(options.script) 
       ? options.script
       : path.join(options.cwd!, options.script);
-        
+    
+    
     if (!(await Bun.file(options.script).exists())) {
       throw new Error(`Script not found: ${options.script}`);
-    }
-
+    } 
+ 
     if (isCluster) {
       // In cluster mode, each instance is a separate container
       for (let i = 0; i < resolvedInstances; i++) {
@@ -117,7 +118,7 @@ import path from "path";
     }
 
     return states;
-   }
+  }
  
    private buildConfig(
      id: number,
