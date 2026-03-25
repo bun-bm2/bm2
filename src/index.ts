@@ -276,7 +276,7 @@ class BM2CLI {
           opts.autorestart = false;
           break;
         case "--no-daemon":
-        case "-nd":
+        case "-d":
           opts.noDaemon = true;
           break;
         case "--env": {
@@ -1015,7 +1015,7 @@ class BM2CLI {
     --port, -p <port>             Base port for cluster
     --env <KEY=VALUE>             Set environment variable
     --no-autorestart              Disable auto-restart
-    --no-daemon, -nd              Run without daemon (blocks)
+    --no-daemon, -d              Run without daemon (blocks)
     --log, -o <file>              Custom stdout log path
     --error, -e <file>            Custom stderr log path
     --namespace <ns>              Namespace grouping
