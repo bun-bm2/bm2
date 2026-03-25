@@ -14,18 +14,18 @@
  * Author: Zak <zak@maxxpainn.com>
  */
 
-import { mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { ALL_DIRS, BM2_HOME } from "./constants";
+import { mkdir } from "fs/promises";
 
 export const DUMP_FILE = join(BM2_HOME, "dump.json");
 
-export function ensureDirs() {
-  for (const dir of ALL_DIRS) {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-  }
+export async function ensureDirs() {
+  await Promise.all(
+    ALL_DIRS.map(async (dir) => {
+      await mkdir(dir, { recursive: true });
+    })
+  );
 }
 
 export function parseMemory(value: string | number): number {

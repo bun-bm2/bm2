@@ -124,6 +124,7 @@ export interface StartOptions {
   instances?: number;
   execMode?: ExecMode;
   autorestart?: boolean;
+  noDaemon?: boolean;
   maxRestarts?: number;
   minUptime?: number;
   maxMemoryRestart?: string | number;

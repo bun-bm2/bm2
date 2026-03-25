@@ -200,8 +200,8 @@ async function loadEcosystemConfig(filePath: string): Promise<EcosystemConfig> {
 // ---------------------------------------------------------------------------
 
 function parseStartFlags(args: string[], scriptOrConfig: string): StartOptions {
-  const opts: StartOptions = { script: scriptOrConfig };
-
+  const opts: StartOptions = { script: scriptOrConfig, noDaemon: false };
+    
   let i = 0;
   const positionalArgs: string[] = [];
 
@@ -265,6 +265,10 @@ function parseStartFlags(args: string[], scriptOrConfig: string): StartOptions {
         break;
       case "--no-autorestart":
         opts.autorestart = false;
+        break;
+      case "--no-daemon":
+      case "-d":
+        opts.noDaemon = true;
         break;
       case "--env": {
         const envPair = args[++i]!;
@@ -874,7 +878,6 @@ async function cmdModule(args: string[]) {
 
 async function cmdDaemon(args: string[]) {
  
-  
   const daemonStatus = () => {
     if (isDaemonRunning()) {
       console.log(colorize("running", "green"));
