@@ -135,7 +135,7 @@ curl -fsSL https://bun.sh/install | bash
 ### From Source
 
 ```
-git clone https://github.com/aspect-dev/bm2.git
+git clone https://github.com/bun-bm2/bm2.git
 cd bm2
 bun install
 bun link
