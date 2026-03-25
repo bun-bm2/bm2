@@ -1,4 +1,3 @@
-
 # ⚡ BM2
 
 **A blazing-fast, full-featured process manager built entirely on Bun native APIs.**
@@ -34,6 +33,7 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
   - [Startup Scripts](#startup-scripts)
   - [Modules](#modules)
   - [Daemon Control](#daemon-control)
+- [Foreground Mode (Docker & Containers)](#foreground-mode-docker--containers)
 - [Configuration Reference](#configuration-reference)
   - [Ecosystem File Format](#ecosystem-file-format)
   - [Process Options](#process-options)
@@ -87,6 +87,8 @@ BM2 replaces PM2's Node.js internals with Bun-native APIs. It uses `Bun.spawn` f
 **Cluster Mode** — Run multiple instances of your application with per-worker environment injection, automatic port assignment, and round-robin-ready configuration using `NODE_APP_INSTANCE` conventions.
 
 **Zero-Downtime Reload** — Graceful reload cycles through instances sequentially, starting the new process before stopping the old one, ensuring your application never drops a request.
+
+**Foreground / No-Daemon Mode** — Run BM2 in blocking foreground mode without spawning a background daemon. Designed for containerized environments like Docker, Kubernetes, and any platform that expects PID 1 to remain in the foreground.
 
 **Real-Time Web Dashboard** — A built-in dark-themed web dashboard with live WebSocket updates, CPU/memory charts, process control buttons, and a log viewer. No external dependencies.
 
@@ -283,6 +285,14 @@ bm2 start server.ts --name api --wait-ready --listen-timeout 10000
 | `--health-check-interval <ms>` | Probe interval | `30000` |
 | `--health-check-timeout <ms>` | Probe timeout | `5000` |
 | `--health-check-max-fails <n>` | Failures before restart | `3` |
+| `--no-daemon`, `-d` | Run in foreground without a daemon (blocks) | `false` |
+
+> **Flags are position-independent.** `--no-daemon` (and all other flags) may appear anywhere relative to the script path:
+> ```
+> bm2 start --no-daemon app.ts
+> bm2 start app.ts --no-daemon
+> bm2 start --name api --no-daemon app.ts --watch
+> ```
 
 ---
 
@@ -415,7 +425,6 @@ bm2 list
 
 # List processes with live updates
 bm2 list --live
-
 ```
 
 ## Notes
@@ -453,27 +462,24 @@ Cluster mode spawns multiple instances of your application, each running in its 
 
 ```bash
 bm2 start server.ts --name api --instances max
-
 ```
 
 ```bash
 bm2 start server.ts --name api --instances 4
-
 ```
 
 ```bash
 bm2 start server.ts --name api --instances 4 --port 3000
-
 ```
 
 #### ⚠️ Current Status & Limitations
 
-While `bm2` provides the orchestration for clustering, please note that **Bun’s native cluster implementation is currently limited by the underlying OS:**
+While `bm2` provides the orchestration for clustering, please note that **Bun's native cluster implementation is currently limited by the underlying OS:**
 
 * **Linux Only:** Port sharing via `reusePort` is only fully supported on **Linux**.
 * **macOS & Windows:** Due to OS-level limitations with `SO_REUSEPORT`, these platforms ignore the `reusePort` option. On these systems, clustering may result in "Address already in use" errors if attempting to bind multiple workers to the same port.
 
-`bm2` leverages the native [Bun.serve cluster logic](https://www.google.com/search?q=https://bun.sh/docs/api/http%23cluster) to ensure maximum performance, but it remains subject to the runtime's maturity.
+`bm2` leverages the native [Bun.serve cluster logic](https://bun.sh/docs/api/http#cluster) to ensure maximum performance, but it remains subject to the runtime's maturity.
 
 
 #### Environment Variables
@@ -503,14 +509,13 @@ Bun.serve({
   port,
   // Share the same port across multiple processes
   // This is the important part!
-  reusePort: true, 
+  reusePort: true,
   fetch(req) {
     return new Response(`Hello from worker ${workerId} on port ${port}`);
   },
 });
 
 console.log(`Worker ${workerId} listening on :${port}`);
-
 ```
 
 ---
@@ -1001,6 +1006,108 @@ bm2 kill
 
 ---
 
+## Foreground Mode (Docker & Containers)
+
+By default, BM2 spawns a background daemon process and returns immediately — ideal for long-running servers. However, containerized environments like **Docker**, **Kubernetes**, and **Railway** expect the entrypoint process to stay in the **foreground**. If BM2 daemonizes and exits, the container stops.
+
+Use `--no-daemon` (alias `-d`) to run BM2 in **foreground / blocking mode**. In this mode:
+
+- No background daemon is spawned.
+- The `bm2 start` process itself stays alive, blocking the terminal (or container).
+- All managed child processes are supervised in-process.
+- Auto-restart and crash recovery still work normally.
+- The process exits only when all child processes stop or a signal (e.g. `SIGTERM`) is received.
+
+### Flags
+
+| Flag | Alias | Description |
+|---|---|---|
+| `--no-daemon` | `-d` | Run in foreground without spawning a background daemon |
+
+### Usage
+
+```bash
+# Foreground — blocks until the process exits
+bm2 start --no-daemon server.ts
+
+# Flag order is flexible — these are all equivalent
+bm2 start server.ts --no-daemon
+bm2 start --no-daemon server.ts --name api
+bm2 start --name api --no-daemon server.ts
+```
+
+### Docker
+
+This is the recommended pattern for running BM2 inside a Docker container. The `CMD` instruction should use `--no-daemon` so BM2 stays as PID 1 (or the foreground entrypoint) and Docker can track its lifecycle correctly.
+
+**Dockerfile**
+
+```dockerfile
+FROM oven/bun:latest
+
+WORKDIR /app
+
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
+
+COPY . .
+
+# Install BM2 globally
+RUN bun add -g bm2
+
+# Use --no-daemon so BM2 stays in the foreground
+CMD ["bm2", "start", "--no-daemon", "./server.ts"]
+```
+
+**With additional options**
+
+```dockerfile
+CMD ["bm2", "start", "--no-daemon", "--name", "api", "--instances", "2", "./server.ts"]
+```
+
+**With an ecosystem file**
+
+```dockerfile
+CMD ["bm2", "start", "--no-daemon", "ecosystem.config.json"]
+```
+
+> **Note:** Ecosystem file support with `--no-daemon` behaves identically to normal mode — all `apps` entries are started and supervised in-process.
+
+### Docker Compose
+
+```yaml
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    command: ["bm2", "start", "--no-daemon", "./server.ts"]
+    restart: unless-stopped
+```
+
+### Kubernetes
+
+```yaml
+containers:
+  - name: api
+    image: your-org/api:latest
+    command: ["bm2", "start", "--no-daemon", "./server.ts"]
+```
+
+### Behaviour Differences vs. Daemon Mode
+
+| Behaviour | Daemon mode (default) | Foreground mode (`--no-daemon`) |
+|---|---|---|
+| CLI returns immediately | ✅ | ❌ — blocks |
+| Background daemon spawned | ✅ | ❌ |
+| Unix socket IPC | ✅ | ❌ |
+| Auto-restart on crash | ✅ | ✅ |
+| `bm2 list` / `bm2 logs` from another shell | ✅ | ❌ — no daemon to query |
+| Suitable for Docker / containers | ❌ | ✅ |
+| Suitable for long-running servers | ✅ | ✅ |
+
+---
+
 ## Configuration Reference
 
 ### Ecosystem File Format
@@ -1042,6 +1149,7 @@ The complete set of options available for each entry in the apps array:
 | `sourceMapSupport` | `boolean` | `false` | Enable source map support |
 | `waitReady` | `boolean` | `false` | Wait for process to emit ready signal |
 | `listenTimeout` | `number` | `3000` | Timeout when waiting for ready signal |
+| `noDaemon` | `boolean` | `false` | Run in foreground without a daemon |
 
 ---
 
@@ -1273,7 +1381,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Process {{ \$labels.name }} is down"
+          summary: "Process {{ $labels.name }} is down"
 
       - alert: HighRestartRate
         expr: rate(bm2_process_restarts_total[5m]) > 0.1
@@ -1281,7 +1389,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Process {{ \$labels.name }} is restarting frequently"
+          summary: "Process {{ $labels.name }} is restarting frequently"
 
       - alert: HighMemoryUsage
         expr: bm2_process_memory_bytes > 1e9
@@ -1289,7 +1397,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Process {{ \$labels.name }} using > 1GB memory"
+          summary: "Process {{ $labels.name }} using > 1GB memory"
 ```
 
 ---
@@ -1885,6 +1993,7 @@ The `ProcessManager` provides the same process management capabilities but runs 
 | Module System | `pm2 install` | `bm2 module install` |
 | TypeScript | Requires compilation | Native support |
 | File Watching | `chokidar` | Native `fs.watch` |
+| Docker / Foreground Mode | `--no-daemon` flag | `--no-daemon` / `-d` flag |
 
 ---
 
@@ -1946,6 +2055,18 @@ bm2 start server.ts --name api --cron "0 3 * * *"
     }
   ]
 }
+```
+
+### Docker Container (Foreground Mode)
+
+```dockerfile
+FROM oven/bun:latest
+WORKDIR /app
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun add -g bm2
+CMD ["bm2", "start", "--no-daemon", "./server.ts"]
 ```
 
 ### Full Production Setup
@@ -2120,6 +2241,18 @@ bm2 ping
 ```
 
 This returns the daemon PID and uptime. If it doesn't respond, the daemon needs to be restarted.
+
+### Container exits immediately
+
+If your Docker container exits right after starting, you are likely missing `--no-daemon`. Without it, BM2 daemonizes and the foreground process exits, causing Docker to stop the container.
+
+```dockerfile
+# ❌ Wrong — BM2 daemonizes and the container exits
+CMD ["bm2", "start", "./server.ts"]
+
+# ✅ Correct — BM2 stays in the foreground
+CMD ["bm2", "start", "--no-daemon", "./server.ts"]
+```
 
 ---
 
