@@ -53,6 +53,8 @@ await ensureDirs();
 // ---------------------------------------------------------------------------
 
 class BM2CLI {
+  
+  noDaemon = false;
 
   // -------------------------------------------------------------------------
   // Daemon helpers
@@ -120,6 +122,11 @@ class BM2CLI {
   }
 
   async sendToDaemon(msg: DaemonMessage): Promise<DaemonResponse> {
+        
+    if (this.noDaemon) {
+      return this.callDaemonCmd(msg)
+    }
+    
     await this.startDaemon();
 
     let res;
@@ -180,9 +187,15 @@ class BM2CLI {
     }
 
     const cwd = path.dirname(abs);
+    
+    if (config.noDaemon) {
+      this.noDaemon = config.noDaemon;
+    }
 
     config.apps = config.apps.map((i) => {
-      if ((i.cwd || "").trim() === "") i.cwd = cwd;
+      if ((i.cwd || "").trim() === "") {
+        i.cwd = cwd;
+      }
       return i;
     });
 
@@ -202,7 +215,8 @@ class BM2CLI {
   // -------------------------------------------------------------------------
 
   parseStartFlags(args: string[]): StartOptions {
-    const opts: StartOptions = { script: "", noDaemon: false };
+    
+    const opts: StartOptions = { script: "" };
 
     let i = 0;
     let scriptResolved = false;
@@ -274,10 +288,6 @@ class BM2CLI {
           break;
         case "--no-autorestart":
           opts.autorestart = false;
-          break;
-        case "--no-daemon":
-        case "-d":
-          opts.noDaemon = true;
           break;
         case "--env": {
           const envPair = args[++i]!;
@@ -369,6 +379,7 @@ class BM2CLI {
   // -------------------------------------------------------------------------
 
   async cmdStart(args: string[]) {
+    
     if (args.length === 0) {
       console.error(colorize("Usage: bm2 start <script|config> [options]", "red"));
       process.exit(1);
@@ -391,42 +402,47 @@ class BM2CLI {
       firstPositional.includes("bm2.config") ||
       firstPositional.includes("pm2.config")
     ) {
+      
       const config = await this.loadEcosystemConfig(firstPositional);
       const res = await this.sendToDaemon({ type: "ecosystem", data: config });
+      
       if (!res.success) {
         console.error(colorize(`Error: ${res.error}`, "red"));
         process.exit(1);
       }
+      
       printProcessTable(res.data);
-      return;
-    }
+      
+      if (this.noDaemon) {
+        await new Promise(() => {});
+      }
+      
+    } else {
 
-    // Parse all args — parseStartFlags finds the script itself
-    const opts = this.parseStartFlags(args);
-
-    if (!opts.script) {
-      console.error(colorize("Error: no script specified", "red"));
-      process.exit(1);
-    }
-
-    opts.script = resolve(opts.script);
-    if (!opts.cwd) opts.cwd = path.dirname(opts.script);
-
-    const noDaemon = opts.noDaemon;
-
-    const res = noDaemon
-      ? await this.callDaemonCmd({ type: "start", data: opts })
-      : await this.sendToDaemon({ type: "start", data: opts });
-
-    if (!res.success) {
-      console.error(colorize(`Error: ${res.error}`, "red"));
-      process.exit(1);
-    }
-
-    printProcessTable(res.data);
-
-    if (noDaemon) {
-      await new Promise(() => {});
+      // Parse all args — parseStartFlags finds the script itself
+      const opts = this.parseStartFlags(args);
+  
+      if (!opts.script) {
+        console.error(colorize("Error: no script specified", "red"));
+        process.exit(1);
+      }
+  
+      opts.script = resolve(opts.script);
+      
+      if (!opts.cwd) opts.cwd = path.dirname(opts.script);
+  
+      const res = await this.sendToDaemon({ type: "start", data: opts });
+  
+      if (!res.success) {
+        console.error(colorize(`Error: ${res.error}`, "red"));
+        process.exit(1);
+      }
+  
+      printProcessTable(res.data);
+  
+      if (this.noDaemon) {
+        await new Promise(() => {});
+      }
     }
   }
 
@@ -1044,6 +1060,8 @@ class BM2CLI {
   async run(argv: string[]) {
     const command = argv[0];
     const commandArgs = argv.slice(1);
+    
+    this.noDaemon = argv.includes("--no-daemon") || argv.includes("-d");
 
     switch (command) {
       case "start":

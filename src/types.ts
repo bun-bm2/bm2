@@ -124,7 +124,6 @@ export interface StartOptions {
   instances?: number;
   execMode?: ExecMode;
   autorestart?: boolean;
-  noDaemon?: boolean;
   maxRestarts?: number;
   minUptime?: number;
   maxMemoryRestart?: string | number;
@@ -156,6 +155,7 @@ export interface StartOptions {
 
 export interface EcosystemConfig {
   apps: StartOptions[];
+  noDaemon?: boolean;
   deploy?: Record<string, DeployConfig>;
 }
 
