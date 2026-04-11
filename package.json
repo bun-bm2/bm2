@@ -1,78 +1,79 @@
 {
-  "name": "bm2",
-  "version": "1.0.36",
-  "description": "A blazing-fast, full-featured process manager built entirely on Bun native APIs. The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.",
-  "main": "src/api.ts",
-  "module": "src/api.ts",
-  "types": "src/api.ts",
-  "exports": {
-    ".": "./src/api.ts",
-    "./cli": "./src/index.ts"
-  },
-  "bin": {
-    "bm2": "./src/index.ts"
-  },
-  "files": [
-    "src/",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun run --watch src/index.ts",
-    "test": "bun test",
-    "lint": "bun x tsc --noEmit",
-    "prepublishOnly": "bun test"
-  },
-  "keywords": [
-    "bun",
-    "process-manager",
-    "pm2",
-    "pm2-alternative",
-    "cluster",
-    "daemon",
-    "production",
-    "deployment",
-    "monitoring",
-    "prometheus",
-    "zero-downtime",
-    "reload",
-    "log-management",
-    "health-check",
-    "bm2"
-  ],
-  "author": {
-    "name": "MaxxPainn",
-    "email": "hello@maxxpainn.com",
-    "url": "https://maxxpainn.com"
-  },
-  "license": "GPL-3.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/bun-bm2/bm2.git"
-  },
-  "bugs": {
-    "url": "https://github.com/bun-bm2/bm2/issues",
-    "email": "hello@maxxpainn.com"
-  },
-  "homepage": "https://github.com/bun-bm2/bm2#readme",
-  "engines": {
-    "bun": ">=1.0.0"
-  },
-  "os": [
-    "linux",
-    "darwin"
-  ],
-  "dependencies": {
-    "cli-table3": "^0.6.5",
-    "pidusage": "^4.0.1",
-    "ws": "^8.19.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.3.9",
-    "@types/pidusage": "^2.0.5",
-    "@types/ws": "^8.18.1",
-    "bun-types": "latest",
-    "typescript": "^5.9.3"
-  }
+	"name": "bm2",
+	"version": "1.0.36",
+	"description": "A blazing-fast, full-featured process manager built entirely on Bun native APIs. The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.",
+	"main": "src/api.ts",
+	"module": "src/api.ts",
+	"types": "src/api.ts",
+	"exports": {
+		".": "./src/api.ts",
+		"./cli": "./src/index.ts",
+		"./types": "./src/types.ts"
+	},
+	"bin": {
+		"bm2": "./src/index.ts"
+	},
+	"files": [
+		"src/",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"start": "bun run src/index.ts",
+		"dev": "bun run --watch src/index.ts",
+		"test": "bun test",
+		"lint": "bun x tsc --noEmit",
+		"prepublishOnly": "bun test"
+	},
+	"keywords": [
+		"bun",
+		"process-manager",
+		"pm2",
+		"pm2-alternative",
+		"cluster",
+		"daemon",
+		"production",
+		"deployment",
+		"monitoring",
+		"prometheus",
+		"zero-downtime",
+		"reload",
+		"log-management",
+		"health-check",
+		"bm2"
+	],
+	"author": {
+		"name": "MaxxPainn",
+		"email": "hello@maxxpainn.com",
+		"url": "https://maxxpainn.com"
+	},
+	"license": "GPL-3.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bun-bm2/bm2.git"
+	},
+	"bugs": {
+		"url": "https://github.com/bun-bm2/bm2/issues",
+		"email": "hello@maxxpainn.com"
+	},
+	"homepage": "https://github.com/bun-bm2/bm2#readme",
+	"engines": {
+		"bun": ">=1.0.0"
+	},
+	"os": [
+		"linux",
+		"darwin"
+	],
+	"dependencies": {
+		"cli-table3": "^0.6.5",
+		"pidusage": "^4.0.1",
+		"ws": "^8.19.0"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.3.9",
+		"@types/pidusage": "^2.0.5",
+		"@types/ws": "^8.18.1",
+		"bun-types": "latest",
+		"typescript": "^5.9.3"
+	}
 }
