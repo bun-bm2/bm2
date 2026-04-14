@@ -306,12 +306,17 @@ import path from "path";
    }
  
    async getLogs(target: string | number, lines: number = 20) {
+     
      const containers = this.resolveTarget(target);
+     
      const results: Array<{ name: string; id: number; out: string; err: string }> = [];
+     
      for (const c of containers) {
+       
        const logs = await this.logManager.readLogs(
          c.name, c.id, lines, c.config.outFile, c.config.errorFile
        );
+       
        results.push({ name: c.name, id: c.id, ...logs });
      }
      return results;
@@ -401,6 +406,7 @@ import path from "path";
    }
  
    private resolveTarget(target: string | number): ProcessContainer[] {
+     
      if (target === "all") {
        return Array.from(this.processes.values());
      }

@@ -567,13 +567,34 @@ class BM2CLI {
   }
 
   async cmdLogs(args: string[]) {
+    
     const target = args[0] || "all";
     let lines = 20;
+    
     const linesIdx = args.indexOf("--lines");
+    
     if (linesIdx !== -1 && args[linesIdx + 1]) {
       lines = parseInt(args[linesIdx + 1]!);
     }
-
+    
+    let follow = false;
+    
+    let i = 0;
+    
+    while (i < args.length) {
+      const arg = args[i]!;
+      
+      if ((arg == "--lines" || arg == "-l") && !Number.isNaN(Number(args[i + 1]))) {
+        lines = parseInt(args[linesIdx + 1]!);
+      }
+      
+      if ((arg == "--follow" || arg == "-f"){
+        follow = true;
+      }
+      
+      i++;
+    }
+    
     const res = await this.sendToDaemon({ type: "logs", data: { target, lines } });
     if (!res.success) {
       console.error(colorize(`Error: ${res.error}`, "red"));

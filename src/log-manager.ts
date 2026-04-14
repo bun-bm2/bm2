@@ -15,12 +15,12 @@
  */
 
 import { join, dirname } from "path";
-import { openSync, readSync, closeSync } from "fs";
-import { appendFile, stat, rename, unlink, readdir, access } from "fs/promises";
+import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type { LogRotateOptions } from "./types";
 
 export class LogManager {
+  
   private writeBuffers: Map<string, string[]> = new Map();
   private flushTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
@@ -80,134 +80,94 @@ export class LogManager {
     customOut?: string,
     customErr?: string
   ): Promise<{ out: string; err: string }> {
+    
     const paths = this.getLogPaths(name, id, customOut, customErr);
     let out = "";
     let err = "";
 
     try {
+      
       const outFile = Bun.file(paths.outFile);
+      
       if (await outFile.exists()) {
         const text = await outFile.text();
         out = text.split("\n").slice(-lines).join("\n");
       }
+      
     } catch {}
 
     try {
+      
       const errFile = Bun.file(paths.errFile);
+      
       if (await errFile.exists()) {
         const text = await errFile.text();
         err = text.split("\n").slice(-lines).join("\n");
       }
+      
     } catch {}
 
     return { out, err };
   }
 
-  async tailLog(
-    filePath: string,
-    callback: (line: string) => void,
-    signal?: AbortSignal
-  ): Promise<void> {
-    let lastSize = 0;
-    const file = Bun.file(filePath);
-    if (await file.exists()) {
-      lastSize = file.size;
-    }
-
+  async tailLog(filePath: string, callback: (line: string) => void, signal?: AbortSignal): Promise<void> {
+    
+    let lastSize = (await Bun.file(filePath).exists()) ? Bun.file(filePath).size : 0;
+  
     const interval = setInterval(async () => {
-      if (signal?.aborted) {
-        clearInterval(interval);
-        return;
-      }
+      if (signal?.aborted) return clearInterval(interval);
       try {
         const f = Bun.file(filePath);
-        if (!(await f.exists())) return;
-
-        const currentSize = f.size;
-        if (currentSize <= lastSize) return;
-
-        const byteLength = currentSize - lastSize;
-
-        // Read only the new bytes via fs.readSync to avoid:
-        //   1. Loading the entire file into memory on every poll.
-        //   2. Slicing by character offset (lastSize) on a UTF-8 string,
-        //      which silently corrupts multi-byte sequences.
-        const buf = Buffer.allocUnsafe(byteLength);
-        const fd = openSync(filePath, "r");
-        try {
-          readSync(fd, buf, 0, byteLength, lastSize);
-        } finally {
-          closeSync(fd);
-        }
-
-        lastSize = currentSize;
-
-        const newContent = new TextDecoder().decode(buf);
-        for (const line of newContent.split("\n").filter(Boolean)) {
-          callback(line);
-        }
+        if (f.size <= lastSize) return;
+  
+        const chunk = await f.slice(lastSize, f.size).text();
+        lastSize = f.size;
+  
+        chunk.split("\n").filter(Boolean).forEach(callback);
       } catch {}
     }, 500);
   }
 
   async rotate(filePath: string, options: LogRotateOptions): Promise<void> {
-    try {
-      const file = Bun.file(filePath);
-      if (!(await file.exists())) return;
-
-      // Async stat — no thread-blocking syscall on the main event loop
-      const fileStat = await stat(filePath);
-      if (fileStat.size < options.maxSize) return;
-
-      // Rotate files: shift .N → .N+1, filePath → .1
-      for (let i = options.retain - 1; i >= 1; i--) {
-        const src = i === 1 ? filePath : `${filePath}.${i - 1}`;
-        const dst = `${filePath}.${i}`;
-
-        const srcExists = await access(src).then(() => true).catch(() => false);
-        if (!srcExists) continue;
-
+    
+    const file = Bun.file(filePath);
+    
+    if (!(await file.exists()) || file.size < options.maxSize) return;
+  
+    const bgTasks: Promise<any>[] = [];
+  
+    for (let i = options.retain - 1; i >= 1; i--) {
+      
+      const src = i === 1 ? filePath : `${filePath}.${i - 1}`;
+      const dst = `${filePath}.${i}`;
+  
+      if (await Bun.file(src).exists()) {
+        
         await rename(src, dst);
-
         if (options.compress) {
-          // Spawn the system `gzip` binary as a background subprocess so
-          // compression never blocks the JS event loop. gzip -f replaces
-          // `dst` with `dst.gz` in-place, matching the old .gz naming.
-          try {
-            const proc = Bun.spawn(["gzip", "-f", dst], {
-              stdout: "ignore",
-              stderr: "pipe",
-            });
-            const exitCode = await proc.exited;
-            if (exitCode !== 0) {
-              const errText = await new Response(proc.stderr).text();
-              console.error(`[bm2] gzip failed for ${dst}: ${errText.trim()}`);
-            }
-          } catch (compressErr) {
-            console.error(`[bm2] Failed to compress rotated log ${dst}:`, compressErr);
-          }
+          // Fire-and-forget compression doesn't block the next rename
+          bgTasks.push(Bun.spawn(["gzip", "-f", dst]).exited); 
         }
       }
-
-      // Clean excess rotated files asynchronously
-      const dir = dirname(filePath);
-      const baseName = filePath.split("/").pop()!;
-      try {
-        const files = await readdir(dir);
-        const rotated = files
-          .filter((f) => f.startsWith(baseName + "."))
-          .sort()
-          .reverse();
-        await Promise.all(
-          rotated.slice(options.retain).map((f) => unlink(join(dir, f)).catch(() => {}))
-        );
-      } catch {}
-
-      // Truncate original to reclaim inode while keeping it open for writers
-      await Bun.write(filePath, "");
-    } catch (err) {
-      console.error(`[bm2] Log rotation failed for ${filePath}:`, err);
     }
+  
+    await Bun.write(filePath, ""); // Instantly truncate and reclaim space
+  
+    const dir = dirname(filePath);
+    const baseName = filePath.split("/").pop()!;
+  
+    // Background cleanup
+    bgTasks.push(
+      readdir(dir).then(files =>
+        Promise.all(
+          files.filter(f => f.startsWith(`${baseName}.`)).sort().reverse()
+            .slice(options.retain).map(f => unlink(join(dir, f)).catch(() => {}))
+        )
+      ).catch(() => {})
+    );
+  
+    // Let Bun handle the heavy lifting in the background!
+    Promise.all(bgTasks).catch(() => {}); 
   }
 
   async flush(name: string, id: number, customOut?: string, customErr?: string) {
