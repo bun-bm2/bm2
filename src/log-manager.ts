@@ -19,6 +19,7 @@ import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type { LogRotateOptions } from "./types";
 import { watch } from "fs";
+import type { ReadableStreamController } from "bun";
 
 export class LogManager {
   
@@ -111,7 +112,7 @@ export class LogManager {
     return { out, err };
   }
 
-  async tailLog(filePath: string, callback: (line: string) => void, signal?: AbortSignal): Promise<void> {
+  async tailLog(filePath: string, streamController: ReadableStreamController<any>, signal: any): Promise<void> {
     
     let lastSize = (await Bun.file(filePath).exists()) ? Bun.file(filePath).size : 0;
       
@@ -124,7 +125,7 @@ export class LogManager {
       const chunk = await f.slice(lastSize, f.size).text();
       lastSize = f.size;
 
-      chunk.split("\n").filter(Boolean).forEach(callback);
+      chunk.split("\n").filter(Boolean).forEach(streamController.enqueue);
       
     });
     

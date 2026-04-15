@@ -322,9 +322,16 @@ import type { ReadableStreamController } from "bun";
      return results;
    }
    
-   async streamLogs(target: string | number, streamController: ReadableStreamController<any>) {
+   async streamLogs(target: string | number, streamController: ReadableStreamController<any>, signal: AbortSignal) {
+     
      const containers = this.resolveTarget(target);
-     Promise.all()
+     const lm = this.logManager;
+     
+     await Promise.all(containers.map(async (c) => {
+       const logPaths = lm.getLogPaths(c.name, c.id);
+       return lm.tailLog(logPaths.outFile, streamController, signal);
+     }))
+     
    }
  
    async flushLogs(target?: string | number) {

@@ -102,7 +102,7 @@ export default class Daemon {
       const msg = (await req.json()) as DaemonMessage;
       
       if (msg.mode == "stream") {
-        
+        return this.handleStream(msg, req);
       }
       
       const response = await this.handleMessage(msg);
@@ -120,14 +120,15 @@ export default class Daemon {
     
     //let controller: ReadableStreamDefaultController;
     const self = this;
+    const signal: AbortSignal = req.signal;
     
     const stream = new ReadableStream({
       start(controller) {
          
-        self.handleMessage(msg, controller);
+        self.handleStreamMessage(msg, controller, signal);
         
         // cleanup when client disconnects
-        req.signal.addEventListener("abort", () => {
+        signal.addEventListener("abort", () => {
           controller.close();
         });
       },
@@ -152,8 +153,35 @@ export default class Daemon {
     this.server = Bun.serve(this.getServerOpts());
     return this.server;
   }
+  
+  async handleStreamMessage(msg: DaemonMessage, streamController: ReadableStreamController<any>, signal: AbortSignal) {
+    try {
+        
+      if (!this.initialized) {
+        await this.initialize();
+      }
 
-  async handleMessage(msg: DaemonMessage, controller?: ReadableStreamController<any>): Promise<DaemonResponse> {
+      const pm = this.pm!;
+      const dashboard = this.dashboard!;
+      const moduleManager = this.moduleManager!;
+      const metricsInterval = this.metricsInterval!;
+
+      switch (msg.type) {
+        case "streamLogs": {
+          await pm.streamLogs(msg.data.target, streamController, signal);
+          return { type: "streamLogs", data: null, success: true, id: msg.id };
+        }
+        default:
+          return { type: "error", error: `Unknown command: ${(msg as any).type}`, success: false, id: msg.id };
+      }
+      
+    } catch (e) {
+       return { type: "error", error: `Unknown command: ${(msg as any).type}`, success: false, id: msg.id };
+    }
+  }
+
+
+  async handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
     try {
 
       if (!this.initialized) {
@@ -215,11 +243,6 @@ export default class Daemon {
         case "logs": {
           const logs = await pm.getLogs(msg.data.target, msg.data.lines);
           return { type: "logs", data: logs, success: true, id: msg.id };
-        }
-          
-        case "streamLogs": {
-          const logs = await pm.streamLogs(msg.data.target, controller);
-          return { type: "streamLogs", data: logs, success: true, id: msg.id };
         }
           
         case "flush": {
