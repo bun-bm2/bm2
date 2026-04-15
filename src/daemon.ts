@@ -25,7 +25,7 @@ import {
 } from "./constants";
 import { ensureDirs } from "./utils";
 import type { DaemonMessage, DaemonResponse } from "./types";
-import type { Server } from "bun";
+import type { ReadableStreamController, Server } from "bun";
 
 
 export default class Daemon {
@@ -100,6 +100,11 @@ export default class Daemon {
     try {
 
       const msg = (await req.json()) as DaemonMessage;
+      
+      if (msg.mode == "stream") {
+        
+      }
+      
       const response = await this.handleMessage(msg);
       return Response.json(response);
 
@@ -109,6 +114,32 @@ export default class Daemon {
         { status: 500 }
       );
     }
+  }
+  
+  handleStream(msg: DaemonMessage, req: Request) {
+    
+    //let controller: ReadableStreamDefaultController;
+    const self = this;
+    
+    const stream = new ReadableStream({
+      start(controller) {
+         
+        self.handleMessage(msg, controller);
+        
+        // cleanup when client disconnects
+        req.signal.addEventListener("abort", () => {
+          controller.close();
+        });
+      },
+    });
+   
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream", // SSE style
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   }
 
   // initialize MUST be called before startServer
@@ -122,7 +153,7 @@ export default class Daemon {
     return this.server;
   }
 
-  async handleMessage(msg: DaemonMessage): Promise<DaemonResponse> {
+  async handleMessage(msg: DaemonMessage, controller?: ReadableStreamController<any>): Promise<DaemonResponse> {
     try {
 
       if (!this.initialized) {
@@ -185,6 +216,12 @@ export default class Daemon {
           const logs = await pm.getLogs(msg.data.target, msg.data.lines);
           return { type: "logs", data: logs, success: true, id: msg.id };
         }
+          
+        case "streamLogs": {
+          const logs = await pm.streamLogs(msg.data.target, controller);
+          return { type: "streamLogs", data: logs, success: true, id: msg.id };
+        }
+          
         case "flush": {
           await pm.flushLogs(msg.data?.target);
           return { type: "flush", success: true, id: msg.id };

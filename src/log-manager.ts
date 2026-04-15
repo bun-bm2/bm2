@@ -18,6 +18,7 @@ import { join, dirname } from "path";
 import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type { LogRotateOptions } from "./types";
+import { watch } from "fs";
 
 export class LogManager {
   
@@ -113,19 +114,23 @@ export class LogManager {
   async tailLog(filePath: string, callback: (line: string) => void, signal?: AbortSignal): Promise<void> {
     
     let lastSize = (await Bun.file(filePath).exists()) ? Bun.file(filePath).size : 0;
-  
-    const interval = setInterval(async () => {
-      if (signal?.aborted) return clearInterval(interval);
-      try {
-        const f = Bun.file(filePath);
-        if (f.size <= lastSize) return;
-  
-        const chunk = await f.slice(lastSize, f.size).text();
-        lastSize = f.size;
-  
-        chunk.split("\n").filter(Boolean).forEach(callback);
-      } catch {}
-    }, 500);
+      
+    const watcher = watch(filePath, async () => {
+      
+      const f = Bun.file(filePath);
+      
+      if (f.size <= lastSize) return;
+
+      const chunk = await f.slice(lastSize, f.size).text();
+      lastSize = f.size;
+
+      chunk.split("\n").filter(Boolean).forEach(callback);
+      
+    });
+    
+    signal?.addEventListener("abort", () => {
+      watcher.close();
+    });
   }
 
   async rotate(filePath: string, options: LogRotateOptions): Promise<void> {

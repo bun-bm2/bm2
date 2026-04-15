@@ -37,6 +37,7 @@
    DEFAULT_LOG_RETAIN,
  } from "./constants";
 import path from "path";
+import type { ReadableStreamController } from "bun";
  
  export class ProcessManager {
    private processes: Map<number, ProcessContainer> = new Map();
@@ -309,17 +310,21 @@ import path from "path";
      
      const containers = this.resolveTarget(target);
      
-     const results: Array<{ name: string; id: number; out: string; err: string }> = [];
+    // just for readability
+    let results: Array<{ name: string; id: number; out: string; err: string }> = [];
+          
+    results = await Promise.all(containers.map(async (c) => ({
+       name: c.name,
+       id: c.id,
+       ...(await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile))
+     })));
      
-     for (const c of containers) {
-       
-       const logs = await this.logManager.readLogs(
-         c.name, c.id, lines, c.config.outFile, c.config.errorFile
-       );
-       
-       results.push({ name: c.name, id: c.id, ...logs });
-     }
      return results;
+   }
+   
+   async streamLogs(target: string | number, streamController: ReadableStreamController<any>) {
+     const containers = this.resolveTarget(target);
+     Promise.all()
    }
  
    async flushLogs(target?: string | number) {

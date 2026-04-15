@@ -177,6 +177,7 @@ export interface DaemonMessage {
   type: string;
   data?: any;
   id?: string;
+  mode?: "stream" | "http"
 }
 
 export interface DaemonResponse {
