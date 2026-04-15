@@ -582,36 +582,45 @@ class BM2CLI {
     let i = 0;
     
     while (i < args.length) {
+      
       const arg = args[i]!;
       
       if ((arg == "--lines" || arg == "-l") && !Number.isNaN(Number(args[i + 1]))) {
         lines = parseInt(args[linesIdx + 1]!);
       }
       
-      if ((arg == "--follow" || arg == "-f"){
+      if (arg == "--follow" || arg == "-f"){
         follow = true;
       }
       
       i++;
     }
     
-    const res = await this.sendToDaemon({ type: "logs", data: { target, lines } });
-    if (!res.success) {
-      console.error(colorize(`Error: ${res.error}`, "red"));
-      process.exit(1);
-    }
-
-    for (const log of res.data) {
-      console.log(colorize(`\n─── ${log.name} (id: ${log.id}) ───`, "bold"));
-      if (log.out) {
-        console.log(colorize("--- stdout ---", "dim"));
-        console.log(log.out);
+    if (follow) {
+      
+    } else {
+      
+      const res = await this.sendToDaemon({ type: "logs", data: { target, lines } });
+      
+      if (!res.success) {
+        console.error(colorize(`Error: ${res.error}`, "red"));
+        process.exit(1);
       }
-      if (log.err) {
-        console.log(colorize("--- stderr ---", "red"));
-        console.log(log.err);
+  
+      for (const log of res.data) {
+        console.log(colorize(`\n─── ${log.name} (id: ${log.id}) ───`, "bold"));
+        if (log.out) {
+          console.log(colorize("--- stdout ---", "dim"));
+          console.log(log.out);
+        }
+        if (log.err) {
+          console.log(colorize("--- stderr ---", "red"));
+          console.log(log.err);
+        }
       }
-    }
+      
+    } //end if  
+    
   }
 
   async cmdFlush(args: string[]) {
