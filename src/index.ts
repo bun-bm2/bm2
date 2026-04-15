@@ -596,6 +596,9 @@ class BM2CLI {
       i++;
     }
     
+    console.log("lines===>", lines)
+    console.log("follow===>", follow)
+    
     if (follow) {
       
     } else {
@@ -606,6 +609,8 @@ class BM2CLI {
         console.error(colorize(`Error: ${res.error}`, "red"));
         process.exit(1);
       }
+      
+      console.log("res.data===>", res.data)
   
       for (const log of res.data) {
         console.log(colorize(`\n─── ${log.name} (id: ${log.id}) ───`, "bold"));

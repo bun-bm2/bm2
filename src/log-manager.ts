@@ -20,6 +20,7 @@ import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type { LogRotateOptions } from "./types";
 import { watch } from "fs";
 import type { ReadableStreamController } from "bun";
+import { $ } from "bun"
 
 export class LogManager {
   
@@ -86,28 +87,21 @@ export class LogManager {
     const paths = this.getLogPaths(name, id, customOut, customErr);
     let out = "";
     let err = "";
-
-    try {
+    
+    const results: string[] = []
+      //console.log("lines===>", lines)
+    
+    Object.values(paths).forEach(async (fp) => {
+      const f = Bun.file(fp);
+      if (!(await f.exists())) return;
       
-      const outFile = Bun.file(paths.outFile);
+      const prefix = fp == paths.errFile ? "Error:" : "Output";
       
-      if (await outFile.exists()) {
-        const text = await outFile.text();
-        out = text.split("\n").slice(-lines).join("\n");
-      }
+      const logArr = (await $`tail -n ${lines} ${fp}`.text()).split("\n")
       
-    } catch {}
-
-    try {
-      
-      const errFile = Bun.file(paths.errFile);
-      
-      if (await errFile.exists()) {
-        const text = await errFile.text();
-        err = text.split("\n").slice(-lines).join("\n");
-      }
-      
-    } catch {}
+      console.log("logArr===>", logArr)
+    })
+    
 
     return { out, err };
   }
