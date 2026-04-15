@@ -166,6 +166,52 @@ class BM2CLI {
       return { type: "error", error: "Fetch Error", success: false };
     }
   }
+  
+  async getDaemonStream<T>(data: DaemonMessage, callback: (data: T | null) => void) {
+    try {
+      
+      await this.startDaemon();
+     
+       const res = await fetch("http://localhost/command", {
+         unix: DAEMON_SOCKET,
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(data)
+       })
+      
+       if (!res.body) {
+        console.error("No stream received");
+        process.exit(1);
+      }
+       
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      
+      
+      let buffer = "";
+    
+      while (true) {
+        
+        const { value, done } = await reader.read();
+        
+        if (done) break;
+    
+        buffer += decoder.decode(value, { stream: true });
+    
+        // split SSE messages
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop()!;
+    
+        for (const part of parts) {
+          console.log("part===>", part)
+        }
+      }
+      
+    } catch (e: any) {
+      console.log("callDaemonCmd:", e, e.stack);
+      return { type: "error", error: "Fetch Error", success: false };
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Ecosystem config loader
@@ -570,6 +616,7 @@ class BM2CLI {
   }
   
   async cmdLogs(args: string[]) {
+    
     let target: string | number = "all";
     let lines = 20;
     let follow = false;
@@ -593,10 +640,6 @@ class BM2CLI {
       i++;
     }
   
-    console.log("target===>", target);
-    console.log("lines===>", lines);
-    console.log("follow===>", follow);
-    
     const renderLogs = (logs: LogItem[]) => {
       for (let log of logs) {
         let line;
@@ -612,10 +655,18 @@ class BM2CLI {
   
     if (follow) {
       
-      await this.sendToDaemon({
+      const opts: DaemonMessage = {
         type: "streamLogs",
         data: { target },
-      });
+        mode: "stream"
+      }
+      
+      const callback = (data: any) => {
+        console.log("data===>", data)
+      }
+      
+      const res = await this.getDaemonStream(opts, callback);
+      
       
     } else {
       

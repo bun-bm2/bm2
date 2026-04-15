@@ -154,7 +154,7 @@ export default class Daemon {
     return this.server;
   }
   
-  async handleStreamMessage(msg: DaemonMessage, streamController: ReadableStreamController<any>, signal: AbortSignal) {
+  async handleStreamMessage(msg: DaemonMessage, streamController: ReadableStreamDefaultController, signal: AbortSignal) {
         
     if (!this.initialized) {
       await this.initialize();

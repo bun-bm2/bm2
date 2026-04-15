@@ -179,11 +179,16 @@ export class LogManager {
     return sortedLogs
   }
 
-  async tailLog(filePath: string, streamController: ReadableStreamController<any>, signal: any): Promise<void> {
+  async tailLog(
+    name: string,
+    id: number,
+    streamController: ReadableStreamDefaultController,
+    signal: any
+  ): Promise<void> {
     
     let lastSize = (await Bun.file(filePath).exists()) ? Bun.file(filePath).size : 0;
       
-    const watcher = watch(filePath, async () => {
+    const watcher = setInterval(async () => {
       
       const f = Bun.file(filePath);
       
@@ -192,12 +197,18 @@ export class LogManager {
       const chunk = await f.slice(lastSize, f.size).text();
       lastSize = f.size;
 
-      chunk.split("\n").filter(Boolean).forEach(streamController.enqueue);
+      chunk
+        .split("\n")
+        .filter(Boolean)
+        .forEach(line => {
+          const data = `data: ${JSON.stringify(line)}\n\n`
+          streamController.enqueue(data)
+        });
       
-    });
+    }, 2000);
     
     signal?.addEventListener("abort", () => {
-      watcher.close();
+      clearInterval(watcher)
     });
   }
 

@@ -320,7 +320,6 @@ import type { ReadableStreamController } from "bun";
       return logs.map((log) => ({ name: c.name, id: c.id, ...log }))
      }))).flat();
      
-     console.log("results===>", results)
      
      let sortedResults = results
        .sort((a, b) => (a.ts || "").localeCompare(b.ts || ""))
@@ -329,15 +328,14 @@ import type { ReadableStreamController } from "bun";
      return sortedResults;
    }
    
-   async streamLogs(target: string | number, streamController: ReadableStreamController<any>, signal: AbortSignal) {
+   async streamLogs(target: string | number, streamController: ReadableStreamDefaultController, signal: AbortSignal) {
      
      const containers = this.resolveTarget(target);
      const lm = this.logManager;
      
-     await Promise.all(containers.map(async (c) => {
-       const logPaths = lm.getLogPaths(c.name, c.id);
-       return lm.tailLog(logPaths.outFile, streamController, signal);
-     }))
+     await Promise.all(containers.map(async (c) => (
+      lm.tailLog(c.name, c.id, streamController, signal)
+     )))
      
    }
  
