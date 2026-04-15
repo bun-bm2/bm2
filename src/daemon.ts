@@ -155,28 +155,22 @@ export default class Daemon {
   }
   
   async handleStreamMessage(msg: DaemonMessage, streamController: ReadableStreamController<any>, signal: AbortSignal) {
-    try {
         
-      if (!this.initialized) {
-        await this.initialize();
-      }
+    if (!this.initialized) {
+      await this.initialize();
+    }
 
-      const pm = this.pm!;
-      const dashboard = this.dashboard!;
-      const moduleManager = this.moduleManager!;
-      const metricsInterval = this.metricsInterval!;
+    const pm = this.pm!;
+    //const dashboard = this.dashboard!;
+    //const moduleManager = this.moduleManager!;
+    //const metricsInterval = this.metricsInterval!;
 
-      switch (msg.type) {
-        case "streamLogs": {
-          await pm.streamLogs(msg.data.target, streamController, signal);
-          return { type: "streamLogs", data: null, success: true, id: msg.id };
-        }
-        default:
-          return { type: "error", error: `Unknown command: ${(msg as any).type}`, success: false, id: msg.id };
+    switch (msg.type) {
+      case "streamLogs": {
+        await pm.streamLogs(msg.data.target, streamController, signal);
+        break;
       }
-      
-    } catch (e) {
-       return { type: "error", error: `Unknown command: ${(msg as any).type}`, success: false, id: msg.id };
+      default:
     }
   }
 
