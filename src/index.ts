@@ -38,10 +38,12 @@ import type {
   StartOptions,
   EcosystemConfig,
   ProcessState,
+  LogEntry,
 } from "./types";
 import { statusColor } from "./colors";
 import { liveWatchProcess, printProcessTable } from "./process-table";
 import Daemon from "./daemon";
+import chalk from "chalk";
 
 // ---------------------------------------------------------------------------
 // Ensure directory structure exists
@@ -611,16 +613,19 @@ class BM2CLI {
         console.error(colorize(`Error: ${res.error}`, "red"));
         process.exit(1);
       }
+      
+      const dataArr = res.data as { name: string; id: number; ts: string; msg: string; level?: "err" | "out" }[];
+          
   
-      for (const log of res.data) {
-        console.log(colorize(`\n─── ${log.name} (id: ${log.id}) ───`, "bold"));
-        if (log.out) {
-          console.log(colorize("--- stdout ---", "dim"));
-          console.log(log.out);
-        }
-        if (log.err) {
-          console.log(colorize("--- stderr ---", "red"));
-          console.log(log.err);
+        for (let log of data.logs) {
+          let line;
+          if (log.level == "err") {
+            line = chalk.red(`[ERROR] ${data.name} | ${log.ts}: ${log.msg}\n`)
+          } else {
+            line = chalk.white(`${chalk.cyan(`[OUTPUT] ${data.name} | ${log.ts}`)}: ${log.msg}\n`)
+          }
+          
+          console.log(line)
         }
       }
     }

@@ -154,11 +154,7 @@ export class ProcessContainer {
     } catch (err: any) {
       this.status = "errored";
  
-      await this.logManager.appendJSONLog(logPaths.errFile, {
-        name: this.name,
-        id: this.id,
-        msg: `[bm2] Failed to start: ${err.message}`
-      });
+      await this.logManager.appendJSONLog(logPaths.errFile, `[bm2] Failed to start: ${err.message}`);
       
       throw err;
     }
@@ -244,11 +240,7 @@ export class ProcessContainer {
         if (done) {
           // Flush any buffered content that was never terminated with \n
           if (remainder.length > 0) {
-            await this.logManager.appendJSONLog(filePath, {
-              name: this.name,
-              id: this.id,
-              msg: remainder
-            })
+            await this.logManager.appendJSONLog(filePath, remainder)
             remainder = "";
           }
           break;
@@ -263,20 +255,12 @@ export class ProcessContainer {
         // allocation pressure stays O(chunk size) rather than O(line count).
         const text = (remainder + chunk).trim();
 
-        await this.logManager.appendJSONLog(filePath, {
-          id: this.id,
-          name: this.name,
-          msg: text
-        });
+        await this.logManager.appendJSONLog(filePath, text);
       }
     } catch {
       // Flush remainder on unexpected stream error
       if (remainder.length > 0) {
-        await this.logManager.appendJSONLog(filePath, {
-          id: this.id,
-          name: this.name,
-          msg: remainder
-        }).catch(() => {});
+        await this.logManager.appendJSONLog(filePath, remainder).catch(() => {});
       }
     }
   }

@@ -233,14 +233,13 @@ export interface DashboardState {
 
 export type LogEntry = {
   ts: string;
-  name: string;
-  id: number;
   level?: "err" | "out",
   msg: string;
 };
 
-export type AppendJSONLogProps = {
+export interface LogItem {
   name: string;
   id: number;
-  msg: string;
-}
+  ts: string;
+  msg: string; level?: "err" | "out"
+}[]

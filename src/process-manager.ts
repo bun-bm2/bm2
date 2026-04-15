@@ -19,6 +19,7 @@
    StartOptions,
    EcosystemConfig,
    MetricSnapshot,
+   LogEntry,
  } from "./types";
  import { ProcessContainer } from "./process-container";
  import { LogManager } from "./log-manager";
@@ -310,18 +311,21 @@ import type { ReadableStreamController } from "bun";
      
      const containers = this.resolveTarget(target);
      
-     console.log("target====>", target)
-     console.log("containers===>", containers)
-     
     // just for readability
-    let results: Array<{ name: string; id: number; out: string; err: string }> = [];
+     let results: Array<{ name: string; id: number; level?: "err" | "out" ; ts: string; msg: string; }> = [];
           
-     results = await Promise.all(containers.map(async (c) => {
-      const log = await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile);     
-      return { id: c.id, name: c.name, ...log };
-    }));
+     results = (await Promise.all(containers.map(async (c) => {
+      const logs = await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile);     
+      return logs.map((log) => ({ name: c.name, id: c.id, ...log }))
+     }))).flat();
      
-     return results;
+     console.log("results===>", results)
+     
+     let sortedResults = results
+       .sort((a, b) => (a.ts || "").localeCompare(b.ts || ""))
+     
+     
+     return sortedResults;
    }
    
    async streamLogs(target: string | number, streamController: ReadableStreamController<any>, signal: AbortSignal) {

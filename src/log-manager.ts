@@ -58,13 +58,12 @@ export class LogManager {
     }
   }
   
-  async appendJSONLog(filePath: string, entry: AppendJSONLogProps) {
+  async appendJSONLog(filePath: string, msg: string) {
     
-    const msg = entry.msg.trim().replace(/[\r\n]+/g, nl);
+     msg = msg.trim().replace(/[\r\n]+/g, nl);
     
     const log: LogEntry = {
       ts: new Date().toISOString(),
-      ...entry,
       msg
     };
   
@@ -121,21 +120,17 @@ export class LogManager {
     try {
       
       newLine = JSON.parse(line) as LogEntry;
-      newLine.level = level;
-    
+      
     } catch {
       // fallback to old format
       const ts = this.extractLogTs(line);
-      newLine = {
-        name: "",
-        id:  0,
-        ts,
-        level,
-        msg: line.replace(`[${ts}]`,"").trim(),
-      };
+      const msg = line.replace(`[${ts}]`, "").trim();
+      newLine = { ts, msg };
     }
     
     newLine.msg = newLine.msg.replaceAll(nl, EOL)
+    newLine.level = level;
+    
     return newLine;
   }
   
@@ -154,14 +149,14 @@ export class LogManager {
 
     const paths = this.getLogPaths(name, id, customOut, customErr);
     
-    console.log("paths===>", paths)
     
     const logs = (await Promise.all(Object.values(paths).map(async (fp) => {         
+      
       const f = Bun.file(fp);
       if (!(await f.exists())) return [];
 
-      const level = fp == paths.errFile ? "err" : "out";
-
+      const level = (fp == paths.errFile) ? "err" : "out";
+      
       const rawLog = await $`tail -n ${lines} ${fp}`.text();
  
        return rawLog
@@ -170,12 +165,16 @@ export class LogManager {
          .map(l => this.parseLine(l, level));
       
     }))).flat();
-    
-    console.log("logs===>", logs.length)
-    
+        
     // lets sort the logs here 
-    const sortedLogs = logs
+    let sortedLogs = logs
       .sort((a, b) => (a.ts || "").localeCompare(b.ts || ""))
+    
+    if (sortedLogs.length > lines) {
+      sortedLogs = sortedLogs.slice(-lines)
+    }
+    
+    console.log(sortedLogs)
       
     return sortedLogs
   }
