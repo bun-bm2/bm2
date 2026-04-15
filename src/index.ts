@@ -203,13 +203,18 @@ class BM2CLI {
         buffer = parts.pop()!;
     
         for (const part of parts) {
-          console.log("part===>", part)
+          const line = part.replace(/^data:\s*/, "").trim();
+          if (!line) continue;
+          
+          try {
+            const result = JSON.parse(line) as T;
+            callback(result)
+          } catch {}
         }
       }
       
     } catch (e: any) {
-      console.log("callDaemonCmd:", e, e.stack);
-      return { type: "error", error: "Fetch Error", success: false };
+      console.log("getDaemonStream:", e, e.stack);
     }
   }
 
@@ -640,17 +645,14 @@ class BM2CLI {
       i++;
     }
   
-    const renderLogs = (logs: LogItem[]) => {
-      for (let log of logs) {
-        let line;
-        if (log.level == "err") {
-          line = chalk.red(`[ERROR] ${log.name} | ${log.ts}: ${log.msg}\n`)
-        } else {
-          line = chalk.white(`${chalk.cyan(`[OUTPUT] ${log.name} | ${log.ts}`)}: ${log.msg}\n`)
-        }
-        
-        console.log(line)
+    const renderLog = (log: LogItem) => {
+      let line;
+      if (log.level == "err") {
+        line = chalk.red(`[ERROR] ${log.name} | ${log.ts}: ${log.msg}\n`)
+      } else {
+        line = chalk.white(`${chalk.cyan(`[OUTPUT] ${log.name} | ${log.ts}`)}: ${log.msg}\n`)
       }
+      console.log(line)  
     }
   
     if (follow) {
@@ -661,13 +663,12 @@ class BM2CLI {
         mode: "stream"
       }
       
-      const callback = (data: any) => {
-        console.log("data===>", data)
+      const callback = (log: LogItem | null) => {
+        if(log) renderLog(log)
       }
       
-      const res = await this.getDaemonStream(opts, callback);
-      
-      
+      await this.getDaemonStream<LogItem>(opts, callback);
+         
     } else {
       
       const res = await this.sendToDaemon({
@@ -680,7 +681,12 @@ class BM2CLI {
         process.exit(1);
       }
      
-      renderLogs(res.data ?? []) 
+      const logs: LogItem[] = res.data ?? [];
+      
+      for (let log of logs) {
+        renderLog(log)
+      }
+      
     }
   }
 

@@ -149,7 +149,6 @@ export class LogManager {
 
     const paths = this.getLogPaths(name, id, customOut, customErr);
     
-    
     const logs = (await Promise.all(Object.values(paths).map(async (fp) => {         
       
       const f = Bun.file(fp);
@@ -183,32 +182,45 @@ export class LogManager {
     name: string,
     id: number,
     streamController: ReadableStreamDefaultController,
-    signal: any
-  ): Promise<void> {
-    
-    let lastSize = (await Bun.file(filePath).exists()) ? Bun.file(filePath).size : 0;
-      
-    const watcher = setInterval(async () => {
-      
-      const f = Bun.file(filePath);
-      
-      if (f.size <= lastSize) return;
-
-      const chunk = await f.slice(lastSize, f.size).text();
-      lastSize = f.size;
-
-      chunk
-        .split("\n")
-        .filter(Boolean)
-        .forEach(line => {
-          const data = `data: ${JSON.stringify(line)}\n\n`
-          streamController.enqueue(data)
-        });
-      
-    }, 2000);
-    
-    signal?.addEventListener("abort", () => {
-      clearInterval(watcher)
+    signal: AbortSignal
+  ) {
+    const paths = this.getLogPaths(name, id);
+  
+    const state = {
+      out: Bun.file(paths.outFile).size,
+      err: Bun.file(paths.errFile).size,
+    };
+  
+    const poll = setInterval(async () => {
+      for (const [type, fp] of [["out", paths.outFile],["err", paths.errFile],] as const) {
+        
+        const f = Bun.file(fp);
+  
+        if (!(await f.exists())) continue;
+  
+        let lastSize = state[type];
+  
+        const size = f.size;
+  
+        if (size < lastSize) {
+          state[type] = 0; // rotated file
+          lastSize = 0;
+        }
+  
+        if (size === lastSize) continue;
+  
+        const chunk = await f.slice(lastSize, size).text();
+        state[type] = size;
+  
+        for (const line of chunk.split("\n").filter(Boolean)) {
+          const log = { name, id, ...this.parseLine(line, type) };
+          streamController.enqueue(`data: ${JSON.stringify(log)}\n\n`);
+        }
+      }
+    }, 500);
+  
+    signal.addEventListener("abort", () => {
+      clearInterval(poll);
     });
   }
 
