@@ -8,7 +8,9 @@
 	"exports": {
 		".": "./src/api.ts",
 		"./cli": "./src/index.ts",
-		"./types": "./src/types.ts"
+		"./types": "./src/types.ts",
+		"./dashboard": "./src/dashboard.ts",
+		"./process-manager": "./src/process-manager.ts"
 	},
 	"bin": {
 		"bm2": "./src/index.ts"
