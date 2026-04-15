@@ -39,6 +39,7 @@ import type {
   EcosystemConfig,
   ProcessState,
   LogEntry,
+  LogItem,
 } from "./types";
 import { statusColor } from "./colors";
 import { liveWatchProcess, printProcessTable } from "./process-table";
@@ -415,7 +416,7 @@ class BM2CLI {
       }
       
       printProcessTable(res.data);
-      
+            
       if (this.noDaemon) {
         await new Promise(() => {});
       }
@@ -595,6 +596,19 @@ class BM2CLI {
     console.log("target===>", target);
     console.log("lines===>", lines);
     console.log("follow===>", follow);
+    
+    const renderLogs = (logs: LogItem[]) => {
+      for (let log of logs) {
+        let line;
+        if (log.level == "err") {
+          line = chalk.red(`[ERROR] ${log.name} | ${log.ts}: ${log.msg}\n`)
+        } else {
+          line = chalk.white(`${chalk.cyan(`[OUTPUT] ${log.name} | ${log.ts}`)}: ${log.msg}\n`)
+        }
+        
+        console.log(line)
+      }
+    }
   
     if (follow) {
       
@@ -604,6 +618,7 @@ class BM2CLI {
       });
       
     } else {
+      
       const res = await this.sendToDaemon({
         type: "logs",
         data: { target, lines },
@@ -613,21 +628,8 @@ class BM2CLI {
         console.error(colorize(`Error: ${res.error}`, "red"));
         process.exit(1);
       }
-      
-      const dataArr = res.data as { name: string; id: number; ts: string; msg: string; level?: "err" | "out" }[];
-          
-  
-        for (let log of data.logs) {
-          let line;
-          if (log.level == "err") {
-            line = chalk.red(`[ERROR] ${data.name} | ${log.ts}: ${log.msg}\n`)
-          } else {
-            line = chalk.white(`${chalk.cyan(`[OUTPUT] ${data.name} | ${log.ts}`)}: ${log.msg}\n`)
-          }
-          
-          console.log(line)
-        }
-      }
+     
+      renderLogs(res.data ?? []) 
     }
   }
 

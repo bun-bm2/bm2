@@ -20,6 +20,7 @@
    EcosystemConfig,
    MetricSnapshot,
    LogEntry,
+   LogItem,
  } from "./types";
  import { ProcessContainer } from "./process-container";
  import { LogManager } from "./log-manager";
@@ -312,7 +313,7 @@ import type { ReadableStreamController } from "bun";
      const containers = this.resolveTarget(target);
      
     // just for readability
-     let results: Array<{ name: string; id: number; level?: "err" | "out" ; ts: string; msg: string; }> = [];
+     let results: LogItem[] = [];
           
      results = (await Promise.all(containers.map(async (c) => {
       const logs = await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile);     
