@@ -21,9 +21,12 @@ import type { AppendJSONLogProps, LogEntry, LogRotateOptions } from "./types";
 import { watch } from "fs";
 import type { ReadableStreamController } from "bun";
 import { $ } from "bun"
+import { EOL } from 'node:os';
 
 const isoRegex: RegExp = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
 
+// [__br__] = linebreak
+const nl = "[__br__]"
 
 export class LogManager {
   
@@ -55,12 +58,14 @@ export class LogManager {
     }
   }
   
-  
   async appendJSONLog(filePath: string, entry: AppendJSONLogProps) {
+    
+    const msg = entry.msg.trim().replace(/[\r\n]+/g, nl);
     
     const log: LogEntry = {
       ts: new Date().toISOString(),
       ...entry,
+      msg
     };
   
     const line = JSON.stringify(log) + "\n";
@@ -109,19 +114,19 @@ export class LogManager {
     }
   }
   
-  private getLogTimestamp(line: string): string {
-    const start = line.indexOf("[");
-    const end = line.indexOf("]");
-    return start !== -1 && end !== -1 ? line.slice(start + 1, end) : "";
-  }
-  
   private parseLine(line: string, level?: "err" | "out"): LogEntry {
+    
+    let newLine: LogEntry;
+    
     try {
-      return JSON.parse(line);
+      
+      newLine = JSON.parse(line) as LogEntry;
+      newLine.level = level;
+    
     } catch {
       // fallback to old format
       const ts = this.extractLogTs(line);
-      return {
+      newLine = {
         name: "",
         id:  0,
         ts,
@@ -129,6 +134,9 @@ export class LogManager {
         msg: line.replace(`[${ts}]`,"").trim(),
       };
     }
+    
+    newLine.msg = newLine.msg.replaceAll(nl, EOL)
+    return newLine;
   }
   
   private extractLogTs(line: string) {
@@ -163,7 +171,7 @@ export class LogManager {
       
     }))).flat();
     
-    console.log("logs===>", logs)
+    console.log("logs===>", logs.length)
     
     // lets sort the logs here 
     const sortedLogs = logs

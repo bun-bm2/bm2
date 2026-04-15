@@ -231,6 +231,7 @@ export class ProcessContainer {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
+    
     // Holds the tail of the last chunk if it did not end on a newline.
     // Without this, a chunk boundary mid-word (e.g. "hel" / "lo\n") would be
     // written as two separate log lines, corrupting the output.
@@ -239,7 +240,7 @@ export class ProcessContainer {
     try {
       while (true) {
         const { done, value } = await reader.read();
-
+        
         if (done) {
           // Flush any buffered content that was never terminated with \n
           if (remainder.length > 0) {
@@ -260,33 +261,13 @@ export class ProcessContainer {
         // Prepend any leftover from the previous chunk before splitting.
         // This is a single string allocation per chunk (not per line), so
         // allocation pressure stays O(chunk size) rather than O(line count).
-        const text = remainder + chunk;
-        const lines = text.split("\n");
+        const text = (remainder + chunk).trim();
 
-        // The last element is either "" (chunk ended on \n) or an incomplete
-        // line. Either way, hold it back for the next iteration.
-        remainder = lines.pop()!;
-
-        if (lines.length === 0) continue;
-
-        // Build a single string for all complete lines in this chunk so
-        // appendJSONLog (and the underlying O_APPEND write) is called once per
-        // chunk, not once per line.
-        //const output = lines.map((line) => `${line}\n`).join("");
-        
-        const base = {
+        await this.logManager.appendJSONLog(filePath, {
           id: this.id,
           name: this.name,
-          ts: new Date().toISOString()
-        };
-        
-        const entries = lines.map((line) => ({
-          ...base,
-          msg: line
-        }));
-        
-        await this.logManager.appendJSONBatch(filePath, entries);
-        
+          msg: text
+        });
       }
     } catch {
       // Flush remainder on unexpected stream error
