@@ -540,6 +540,8 @@ bm2 logs my-api --err
 
 ```
 bm2 logs my-api --follow
+bm2 logs my-api -f
+bm2 logs -f
 ```
 
 ---
