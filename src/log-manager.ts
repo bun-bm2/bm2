@@ -17,7 +17,7 @@
 import { join, dirname } from "path";
 import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
-import type { AppendJSONLogProps, LogEntry, LogRotateOptions } from "./types";
+import type {  LogEntry, LogRotateOptions } from "./types";
 import { watch } from "fs";
 import type { ReadableStreamController } from "bun";
 import { $ } from "bun"
@@ -82,10 +82,6 @@ export class LogManager {
         setTimeout(() => this.flushBuffer(filePath), 100)
       );
     }
-  }
-  
-  async appendJSONBatch(filePath: string, entries: AppendJSONLogProps[]): Promise<void> {
-    await Promise.all(entries.map(e => this.appendJSONLog(filePath, e)))
   }
 
   private async flushBuffer(filePath: string) {
