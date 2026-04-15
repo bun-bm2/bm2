@@ -153,11 +153,13 @@ export class ProcessContainer {
       }
     } catch (err: any) {
       this.status = "errored";
-      const timestamp = new Date().toISOString();
-      await this.logManager.appendLog(
-        logPaths.errFile,
-        `[${timestamp}] [bm2] Failed to start: ${err.message}\n`
-      );
+ 
+      await this.logManager.appendJSONLog(logPaths.errFile, {
+        name: this.name,
+        id: this.id,
+        msg: `[bm2] Failed to start: ${err.message}`
+      });
+      
       throw err;
     }
   }
@@ -241,8 +243,11 @@ export class ProcessContainer {
         if (done) {
           // Flush any buffered content that was never terminated with \n
           if (remainder.length > 0) {
-            const timestamp = new Date().toISOString();
-            await this.logManager.appendLog(filePath, `[${timestamp}] ${remainder}\n`);
+            await this.logManager.appendJSONLog(filePath, {
+              name: this.name,
+              id: this.id,
+              msg: remainder
+            })
             remainder = "";
           }
           break;
@@ -264,18 +269,33 @@ export class ProcessContainer {
 
         if (lines.length === 0) continue;
 
-        const timestamp = new Date().toISOString();
         // Build a single string for all complete lines in this chunk so
-        // appendLog (and the underlying O_APPEND write) is called once per
+        // appendJSONLog (and the underlying O_APPEND write) is called once per
         // chunk, not once per line.
-        const output = lines.map((line) => `[${timestamp}] ${line}\n`).join("");
-        await this.logManager.appendLog(filePath, output);
+        //const output = lines.map((line) => `${line}\n`).join("");
+        
+        const base = {
+          id: this.id,
+          name: this.name,
+          ts: new Date().toISOString()
+        };
+        
+        const entries = lines.map((line) => ({
+          ...base,
+          msg: line
+        }));
+        
+        await this.logManager.appendJSONBatch(filePath, entries);
+        
       }
     } catch {
       // Flush remainder on unexpected stream error
       if (remainder.length > 0) {
-        const timestamp = new Date().toISOString();
-        await this.logManager.appendLog(filePath, `[${timestamp}] ${remainder}\n`).catch(() => {});
+        await this.logManager.appendJSONLog(filePath, {
+          id: this.id,
+          name: this.name,
+          msg: remainder
+        }).catch(() => {});
       }
     }
   }

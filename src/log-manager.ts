@@ -17,10 +17,13 @@
 import { join, dirname } from "path";
 import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
-import type { LogRotateOptions } from "./types";
+import type { AppendJSONLogProps, LogEntry, LogRotateOptions } from "./types";
 import { watch } from "fs";
 import type { ReadableStreamController } from "bun";
 import { $ } from "bun"
+
+const isoRegex: RegExp = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
+
 
 export class LogManager {
   
@@ -33,7 +36,8 @@ export class LogManager {
       errFile: customErr || join(LOG_DIR, `${name}-${id}-error.log`),
     };
   }
-
+  
+  
   async appendLog(filePath: string, data: string | Uint8Array) {
     const text = typeof data === "string" ? data : new TextDecoder().decode(data);
 
@@ -49,6 +53,35 @@ export class LogManager {
         this.flushBuffer(filePath);
       }, 100));
     }
+  }
+  
+  
+  async appendJSONLog(filePath: string, entry: AppendJSONLogProps) {
+    
+    const log: LogEntry = {
+      ts: new Date().toISOString(),
+      ...entry,
+    };
+  
+    const line = JSON.stringify(log) + "\n";
+  
+    // reuse your buffer system 
+    if (!this.writeBuffers.has(filePath)) {
+      this.writeBuffers.set(filePath, []);
+    }
+  
+    this.writeBuffers.get(filePath)!.push(line);
+  
+    if (!this.flushTimers.has(filePath)) {
+      this.flushTimers.set(
+        filePath,
+        setTimeout(() => this.flushBuffer(filePath), 100)
+      );
+    }
+  }
+  
+  async appendJSONBatch(filePath: string, entries: AppendJSONLogProps[]): Promise<void> {
+    await Promise.all(entries.map(e => this.appendJSONLog(filePath, e)))
   }
 
   private async flushBuffer(filePath: string) {
@@ -75,6 +108,33 @@ export class LogManager {
       await this.flushBuffer(filePath);
     }
   }
+  
+  private getLogTimestamp(line: string): string {
+    const start = line.indexOf("[");
+    const end = line.indexOf("]");
+    return start !== -1 && end !== -1 ? line.slice(start + 1, end) : "";
+  }
+  
+  private parseLine(line: string, level?: "err" | "out"): LogEntry {
+    try {
+      return JSON.parse(line);
+    } catch {
+      // fallback to old format
+      const ts = this.extractLogTs(line);
+      return {
+        name: "",
+        id:  0,
+        ts,
+        level,
+        msg: line.replace(`[${ts}]`,"").trim(),
+      };
+    }
+  }
+  
+  private extractLogTs(line: string) {
+    const match = line.match(isoRegex);
+    return match?.[0] ?? ""
+  }
 
   async readLogs(
     name: string,
@@ -82,28 +142,34 @@ export class LogManager {
     lines: number = 20,
     customOut?: string,
     customErr?: string
-  ): Promise<{ out: string; err: string }> {
-    
-    const paths = this.getLogPaths(name, id, customOut, customErr);
-    let out = "";
-    let err = "";
-    
-    const results: string[] = []
-      //console.log("lines===>", lines)
-    
-    Object.values(paths).forEach(async (fp) => {
-      const f = Bun.file(fp);
-      if (!(await f.exists())) return;
-      
-      const prefix = fp == paths.errFile ? "Error:" : "Output";
-      
-      const logArr = (await $`tail -n ${lines} ${fp}`.text()).split("\n")
-      
-      console.log("logArr===>", logArr)
-    })
-    
+  ): Promise<LogEntry[]> {
 
-    return { out, err };
+    const paths = this.getLogPaths(name, id, customOut, customErr);
+    
+    console.log("paths===>", paths)
+    
+    const logs = (await Promise.all(Object.values(paths).map(async (fp) => {         
+      const f = Bun.file(fp);
+      if (!(await f.exists())) return [];
+
+      const level = fp == paths.errFile ? "err" : "out";
+
+      const rawLog = await $`tail -n ${lines} ${fp}`.text();
+ 
+       return rawLog
+         .split("\n")
+         .filter(Boolean)
+         .map(l => this.parseLine(l, level));
+      
+    }))).flat();
+    
+    console.log("logs===>", logs)
+    
+    // lets sort the logs here 
+    const sortedLogs = logs
+      .sort((a, b) => (a.ts || "").localeCompare(b.ts || ""))
+      
+    return sortedLogs
   }
 
   async tailLog(filePath: string, streamController: ReadableStreamController<any>, signal: any): Promise<void> {

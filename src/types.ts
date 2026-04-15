@@ -230,3 +230,17 @@ export interface DashboardState {
   metrics: MetricSnapshot;
   logs: Record<string, { out: string; err: string }>;
 }
+
+export type LogEntry = {
+  ts: string;
+  name: string;
+  id: number;
+  level?: "err" | "out",
+  msg: string;
+};
+
+export type AppendJSONLogProps = {
+  name: string;
+  id: number;
+  msg: string;
+}

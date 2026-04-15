@@ -310,14 +310,16 @@ import type { ReadableStreamController } from "bun";
      
      const containers = this.resolveTarget(target);
      
+     console.log("target====>", target)
+     console.log("containers===>", containers)
+     
     // just for readability
     let results: Array<{ name: string; id: number; out: string; err: string }> = [];
           
-    results = await Promise.all(containers.map(async (c) => ({
-       name: c.name,
-       id: c.id,
-       ...(await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile))
-     })));
+     results = await Promise.all(containers.map(async (c) => {
+      const log = await this.logManager.readLogs(c.name, c.id, lines, c.config.outFile, c.config.errorFile);     
+      return { id: c.id, name: c.name, ...log };
+    }));
      
      return results;
    }
