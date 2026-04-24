@@ -156,7 +156,7 @@ export default class Daemon {
       throw new Error("Daemon.initialize() must be called before startServer()");
     }
     
-    this.server = Bun.serve(this.getServerOpts());
+    this.server = Bun.serve(this.getServerOpts() as any);
     return this.server;
   }
   
