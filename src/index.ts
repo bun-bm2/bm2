@@ -209,7 +209,8 @@ class BM2CLI {
           try {
             const result = JSON.parse(line) as T;
             callback(result)
-          } catch {}
+          } catch { }
+          
         }
       }
       

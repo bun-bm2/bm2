@@ -186,6 +186,7 @@ export class LogManager {
       out: Bun.file(paths.outFile).size,
       err: Bun.file(paths.errFile).size,
     };
+    
   
     const poll = setInterval(async () => {
       for (const [type, fp] of [["out", paths.outFile],["err", paths.errFile],] as const) {
@@ -209,8 +210,13 @@ export class LogManager {
         state[type] = size;
   
         for (const line of chunk.split("\n").filter(Boolean)) {
-          const log = { name, id, ...this.parseLine(line, type) };
-          streamController.enqueue(`data: ${JSON.stringify(log)}\n\n`);
+          try {
+            const log = { name, id, ...this.parseLine(line, type) };
+            streamController.enqueue(`data: ${JSON.stringify(log)}\n\n`);
+          } catch (e: any) {
+            console.log("tailLog: ", e, e.stack)
+            return;
+          }
         }
       }
     }, 500);

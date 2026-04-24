@@ -48,6 +48,7 @@ export default class Daemon {
   getServerOpts = () => ({
     unix: DAEMON_SOCKET,
     fetch: this.boundFetch,
+    idleTimeout: 0
   });
 
   
@@ -127,8 +128,13 @@ export default class Daemon {
          
         self.handleStreamMessage(msg, controller, signal);
         
+        const keepAlive = setInterval(() => {
+          controller.enqueue(': ping\n\n');   // SSE comment – ignored by clients but counts as data
+        }, 5000);                  // every 5 seconds (less than 10s timeout)
+        
         // cleanup when client disconnects
         signal.addEventListener("abort", () => {
+          clearInterval(keepAlive)
           controller.close();
         });
       },
