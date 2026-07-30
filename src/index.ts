@@ -463,6 +463,10 @@ class BM2CLI {
     ) {
       
       const config = await this.loadEcosystemConfig(firstPositional);
+      const raw = args.includes("--raw");
+      if (raw) {
+        config.apps = config.apps.map((app) => ({ ...app, raw: true }));
+      }
       const res = await this.sendToDaemon({ type: "ecosystem", data: config });
       
       if (!res.success) {
@@ -470,7 +474,9 @@ class BM2CLI {
         process.exit(1);
       }
       
-      printProcessTable(res.data);
+      if (!raw && !config.apps.some((app) => app.raw)) {
+        printProcessTable(res.data);
+      }
             
       if (this.noDaemon) {
         await new Promise(() => {});
@@ -497,7 +503,9 @@ class BM2CLI {
         process.exit(1);
       }
   
-      printProcessTable(res.data);
+      if (!opts.raw) {
+        printProcessTable(res.data);
+      }
   
       if (this.noDaemon) {
         await new Promise(() => {});
