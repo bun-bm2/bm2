@@ -22,7 +22,6 @@ import {
   VERSION,
   DAEMON_SOCKET,
   DAEMON_PID_FILE,
-  BM2_HOME,
   DASHBOARD_PORT,
   METRICS_PORT,
   DAEMON_OUT_LOG_FILE,
@@ -38,7 +37,6 @@ import type {
   StartOptions,
   EcosystemConfig,
   ProcessState,
-  LogEntry,
   LogItem,
 } from "./types";
 import { statusColor } from "./colors";
@@ -1141,7 +1139,7 @@ class BM2CLI {
     --port, -p <port>             Base port for cluster
     --env <KEY=VALUE>             Set environment variable
     --no-autorestart              Disable auto-restart
-    --no-daemon, -d              Run without daemon (blocks)
+    --no-daemon, -d               Run without daemon (blocks)
     --raw                         Mirror child logs to stdout and stderr
     --log, -o <file>              Custom stdout log path
     --error, -e <file>            Custom stderr log path
