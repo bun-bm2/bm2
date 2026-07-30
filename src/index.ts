@@ -22,7 +22,6 @@ import {
   VERSION,
   DAEMON_SOCKET,
   DAEMON_PID_FILE,
-  BM2_HOME,
   DASHBOARD_PORT,
   METRICS_PORT,
   DAEMON_OUT_LOG_FILE,
@@ -38,7 +37,6 @@ import type {
   StartOptions,
   EcosystemConfig,
   ProcessState,
-  LogEntry,
   LogItem,
 } from "./types";
 import { statusColor } from "./colors";
@@ -366,6 +364,9 @@ class BM2CLI {
         case "--merge-logs":
           opts.mergeLogs = true;
           break;
+        case "--raw":
+          opts.raw = true;
+          break;
         case "--log-date-format":
           opts.logDateFormat = args[++i];
           break;
@@ -460,6 +461,10 @@ class BM2CLI {
     ) {
       
       const config = await this.loadEcosystemConfig(firstPositional);
+      const raw = args.includes("--raw");
+      if (raw) {
+        config.apps = config.apps.map((app) => ({ ...app, raw: true }));
+      }
       const res = await this.sendToDaemon({ type: "ecosystem", data: config });
       
       if (!res.success) {
@@ -467,7 +472,9 @@ class BM2CLI {
         process.exit(1);
       }
       
-      printProcessTable(res.data);
+      if (!raw && !config.apps.some((app) => app.raw)) {
+        printProcessTable(res.data);
+      }
             
       if (this.noDaemon) {
         await new Promise(() => {});
@@ -494,7 +501,9 @@ class BM2CLI {
         process.exit(1);
       }
   
-      printProcessTable(res.data);
+      if (!opts.raw) {
+        printProcessTable(res.data);
+      }
   
       if (this.noDaemon) {
         await new Promise(() => {});
@@ -1130,7 +1139,8 @@ class BM2CLI {
     --port, -p <port>             Base port for cluster
     --env <KEY=VALUE>             Set environment variable
     --no-autorestart              Disable auto-restart
-    --no-daemon, -d              Run without daemon (blocks)
+    --no-daemon, -d               Run without daemon (blocks)
+    --raw                         Mirror child logs to stdout and stderr
     --log, -o <file>              Custom stdout log path
     --error, -e <file>            Custom stderr log path
     --namespace <ns>              Namespace grouping

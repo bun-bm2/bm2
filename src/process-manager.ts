@@ -160,6 +160,7 @@ import type { ReadableStreamController } from "bun";
        interpreter: options.interpreter,
        interpreterArgs: options.interpreterArgs,
        mergeLogs: options.mergeLogs ?? false,
+       raw: options.raw ?? false,
        logDateFormat: options.logDateFormat,
        errorFile: options.errorFile,
        outFile: options.outFile,
