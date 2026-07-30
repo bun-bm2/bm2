@@ -286,6 +286,7 @@ bm2 start server.ts --name api --wait-ready --listen-timeout 10000
 | `--health-check-timeout <ms>` | Probe timeout | `5000` |
 | `--health-check-max-fails <n>` | Failures before restart | `3` |
 | `--no-daemon`, `-d` | Run in foreground without a daemon (blocks) | `false` |
+| `--raw` | Also send child logs to stdout/stderr while retaining log files | `false` |
 
 > **Flags are position-independent.** `--no-daemon` (and all other flags) may appear anywhere relative to the script path:
 > ```
@@ -1061,6 +1062,18 @@ RUN bun add -g bm2
 CMD ["bm2", "start", "--no-daemon", "./server.ts"]
 ```
 
+### Docker logs and log files
+
+Use `--raw` with `--no-daemon` to keep BM2 log files while also exposing the
+managed process output to the container runtime:
+
+```dockerfile
+CMD ["bm2", "start", "--no-daemon", "--raw", "ecosystem.config.cjs"]
+```
+
+`--raw` mirrors child stdout to BM2 stdout and child stderr to BM2 stderr. It
+does not disable `outFile` or `errorFile`.
+
 **With additional options**
 
 ```dockerfile
@@ -1172,6 +1185,7 @@ The complete set of options available for each entry in the apps array:
 | `outFile` | `string` | `~/.bm2/logs/<name>-<id>-out.log` | Custom stdout log path |
 | `errorFile` | `string` | `~/.bm2/logs/<name>-<id>-error.log` | Custom stderr log path |
 | `mergeLogs` | `boolean` | `false` | Merge all instance logs into one file |
+| `raw` | `boolean` | `false` | Mirror child stdout and stderr to BM2 stdout and stderr |
 | `logDateFormat` | `string` | — | Date format for log line prefixes |
 | `logMaxSize` | `string` or `number` | `"10M"` | Max log file size before rotation |
 | `logRetain` | `number` | `5` | Number of rotated files to keep |

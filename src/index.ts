@@ -366,6 +366,9 @@ class BM2CLI {
         case "--merge-logs":
           opts.mergeLogs = true;
           break;
+        case "--raw":
+          opts.raw = true;
+          break;
         case "--log-date-format":
           opts.logDateFormat = args[++i];
           break;
@@ -1131,6 +1134,7 @@ class BM2CLI {
     --env <KEY=VALUE>             Set environment variable
     --no-autorestart              Disable auto-restart
     --no-daemon, -d              Run without daemon (blocks)
+    --raw                         Mirror child logs to stdout and stderr
     --log, -o <file>              Custom stdout log path
     --error, -e <file>            Custom stderr log path
     --namespace <ns>              Namespace grouping

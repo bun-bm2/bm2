@@ -200,10 +200,10 @@ export class ProcessContainer {
     this.pid = proc.pid;
 
     if (proc.stdout && typeof proc.stdout !== "number") {
-      this.pipeStream(proc.stdout, logPaths.outFile);
+      this.pipeStream(proc.stdout, logPaths.outFile, "stdout");
     }
     if (proc.stderr && typeof proc.stderr !== "number") {
-      this.pipeStream(proc.stderr, logPaths.errFile);
+      this.pipeStream(proc.stderr, logPaths.errFile, "stderr");
     }
 
     proc.exited.then((code) => {
@@ -216,14 +216,18 @@ export class ProcessContainer {
   private pipeOutput(logPaths: { outFile: string; errFile: string }) {
     if (!this.process) return;
     if (this.process.stdout && typeof this.process.stdout !== "number") {
-      this.pipeStream(this.process.stdout, logPaths.outFile);
+      this.pipeStream(this.process.stdout, logPaths.outFile, "stdout");
     }
     if (this.process.stderr && typeof this.process.stderr !== "number") {
-      this.pipeStream(this.process.stderr, logPaths.errFile);
+      this.pipeStream(this.process.stderr, logPaths.errFile, "stderr");
     }
   }
 
-  private async pipeStream(stream: ReadableStream<Uint8Array>, filePath: string) {
+  private async pipeStream(
+    stream: ReadableStream<Uint8Array>,
+    filePath: string,
+    output: "stdout" | "stderr"
+  ) {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
@@ -244,6 +248,17 @@ export class ProcessContainer {
             remainder = "";
           }
           break;
+        }
+
+        // Keep the manager's log files while exposing the child output to the
+        // foreground process (and therefore to `docker logs`) when requested.
+        // Forward bytes instead of decoded strings so log content is unchanged.
+        if (this.config.raw) {
+          if (output === "stdout") {
+            process.stdout.write(value);
+          } else {
+            process.stderr.write(value);
+          }
         }
 
         // stream=true tells the decoder to hold multi-byte UTF-8 sequences

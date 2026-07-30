@@ -45,6 +45,8 @@ export interface ProcessDescription {
   interpreter?: string;
   interpreterArgs?: string[];
   mergeLogs: boolean;
+  /** Also forward child stdout/stderr to BM2's own stdout/stderr. */
+  raw: boolean;
   logDateFormat?: string;
   errorFile?: string;
   outFile?: string;
@@ -132,6 +134,8 @@ export interface StartOptions {
   interpreter?: string;
   interpreterArgs?: string[];
   mergeLogs?: boolean;
+  /** Also forward child stdout/stderr to BM2's own stdout/stderr. */
+  raw?: boolean;
   logDateFormat?: string;
   errorFile?: string;
   outFile?: string;
