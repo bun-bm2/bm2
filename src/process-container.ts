@@ -9,7 +9,7 @@
  * - Log management & rotation
  * - Deployment support
  *
- * https://github.com/your-org/bm2
+ * https://github.com/bun-bm2/bm2
  * License: GPL-3.0-only
  * Author: Zak <zak@maxxpainn.com>
  */
