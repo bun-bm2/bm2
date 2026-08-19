@@ -357,35 +357,38 @@ import type { ReadableStreamController } from "bun";
      await Bun.write(DUMP_FILE, JSON.stringify(data, null, 2));
    }
  
-   async resurrect(): Promise<ProcessState[]> {
-     try {
-       const file = Bun.file(DUMP_FILE);
-       if (!(await file.exists())) return [];
-       const data = await file.json();
-       const states: ProcessState[] = [];
- 
-       for (const item of data) {
-         const result = await this.start({
-           name: item.config.name,
-           script: item.config.script,
-           args: item.config.args,
-           cwd: item.config.cwd,
-           env: item.config.env,
-           autorestart: item.config.autorestart,
-           maxRestarts: item.config.maxRestarts,
-           watch: item.config.watch,
-           instances: 1,
-           execMode: item.config.execMode,
-           port: item.config.port,
-           healthCheckUrl: item.config.healthCheckUrl,
-         });
-         states.push(...result);
-       }
-       return states;
-     } catch {
-       return [];
-     }
-   }
+   // src/process-manager.ts
+
+    async resurrect(): Promise<ProcessState[]> {
+      try {
+        const file = Bun.file(DUMP_FILE);
+        if (!(await file.exists())) return [];
+        const data = await file.json();
+        const states: ProcessState[] = [];
+
+        for (const item of data) {
+          
+          //  Pass the FULL saved config to restore all options (interpreter, logs, cron, etc.)
+          const result = await this.start(item.config);
+          
+          // Restore the restart counts for continuity and observability
+          for (const proc of result) {
+            const container = this.processes.get(proc.pm_id);
+            if (container) {
+              container.restartCount = item.restartCount ?? 0;
+              container.unstableRestarts = item.unstableRestarts ?? 0;
+            }
+          }
+          states.push(...result);
+        }
+
+        return states;
+      
+      } catch (err) {
+        console.error("[bm2] Resurrect failed:", err);
+        return [];
+      }
+    }
  
    async startEcosystem(config: EcosystemConfig): Promise<ProcessState[]> {
      const states: ProcessState[] = [];
