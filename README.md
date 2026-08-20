@@ -7,11 +7,32 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 ![Language](https://img.shields.io/badge/language-TypeScript-3178c6?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)
 [![Tests](https://github.com/bun-bm2/bm2/actions/workflows/test.yml/badge.svg)](https://github.com/bun-bm2/bm2/actions/workflows/test.yml)
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-GitHub%20Sponsors-ea4aaa?style=flat-square&logo=github-sponsors)](https://github.com/sponsors/bun-bm2)
+
+---
+
+### 💖 Support & Sponsor BM2
+
+BM2 is free and open-source software built for the Bun community. If BM2 saves you time or powers your production services, please consider supporting its development:
+
+- ⭐ **Star the Repo:** Star us on [GitHub](https://github.com/bun-bm2/bm2) to help more developers discover BM2.
+- 💖 **Sponsor:** Support ongoing maintenance via [GitHub Sponsors](https://github.com/sponsors/bun-bm2).
+- 🐛 **Contribute:** Open issues, suggest features, or submit pull requests.
+
+#### Crypto Donations
+
+| Network / Ecosystem | Address |
+|---|---|
+| **Bitcoin (BTC)** | `bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l` |
+| **EVM** *(Ethereum, Base, Arbitrum, BNB Chain, Avalanche)* | `0x52CcA569bB086acDb9388E3c7Cf0753c0337C2e1` |
+| **Solana** | `DKviNTJC9rst6tmQQgMVgd8QBsSztVPmd3d5MsPussUc` |
+| **Sui** | `0x789494019f07d318125263a1730bb651aeab0ebb68f8f77f838dbf3e67a755cd` |
 
 ---
 
 ## Table of Contents
 
+- [Support & Sponsor](#-support--sponsor-bm2)
 - [Why BM2?](#why-bm2)
 - [Features](#features)
 - [Requirements](#requirements)
