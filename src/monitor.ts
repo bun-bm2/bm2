@@ -18,6 +18,7 @@ import type { MetricSnapshot, ProcessState } from "./types";
 import { getSystemInfo } from "./utils";
 import { METRICS_DIR } from "./constants";
 import { join } from "path";
+import pidusage from "pidusage";
 
 export class Monitor {
   private history: MetricSnapshot[] = [];
@@ -62,20 +63,12 @@ export class Monitor {
 
         return { memory, cpu, handles };
       } else {
-        // macOS / fallback
-        const ps = Bun.spawn(
-          ["ps", "-o", "rss=,pcpu=", "-p", String(pid)],
-          { stdout: "pipe", stderr: "pipe" }
-        );
-        const output = await new Response(ps.stdout).text();
-        const parts = output.trim().split(/\s+/);
-        
-        if (parts.length >= 2) {
-          return {
-            memory: parseInt(parts[0]!) * 1024,
-            cpu: parseFloat(parts[1]!),
-          };
-        }
+        // Windows, macOS, and cross-platform fallback
+        const stats = await pidusage(pid);
+        return {
+          memory: stats.memory,
+          cpu: stats.cpu,
+        };
       }
     } catch {}
 

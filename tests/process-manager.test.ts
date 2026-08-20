@@ -210,3 +210,200 @@ describe("Process Environment Variables", () => {
     expect(Object.keys(proc.env)).toHaveLength(0);
   });
 });
+
+describe("ProcessManager save() and resurrect() Full Configuration Round-Trip", () => {
+  test("should preserve complete normalized ProcessDescription across save and resurrect", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const { DUMP_FILE } = await import("../src/constants");
+
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "server.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const started = await pm.start({
+      name: "custom-api",
+      script: scriptPath,
+      cwd: TEST_DIR,
+      args: ["--port", "8080"],
+      env: { CUSTOM_VAR: "true", NODE_ENV: "production" },
+      interpreter: "bun",
+      interpreterArgs: ["run"],
+      instances: 1,
+      execMode: "fork",
+      autorestart: true,
+      maxRestarts: 25,
+      minUptime: 2000,
+      restartDelay: 500,
+      killTimeout: 4000,
+      maxMemoryRestart: "512M",
+      watch: ["/some/watch/dir"],
+      ignoreWatch: ["node_modules", ".git"],
+      cron: "0 0 * * *",
+      healthCheckUrl: "http://localhost:8080/health",
+      healthCheckInterval: 15000,
+      healthCheckTimeout: 3000,
+      healthCheckMaxFails: 5,
+      logMaxSize: "20M",
+      logRetain: 8,
+      logCompress: true,
+      mergeLogs: false,
+      raw: false,
+      namespace: "backend",
+      port: 8080,
+    });
+
+    expect(started).toHaveLength(1);
+    const originalProc = started[0]!;
+
+    // Set custom restart counts
+    const container = (pm as any).processes.get(originalProc.id);
+    container.restartCount = 7;
+    container.unstableRestarts = 2;
+
+    // Save to disk
+    await pm.save();
+
+    // Verify dump file exists
+    const dumpFile = Bun.file(DUMP_FILE);
+    expect(await dumpFile.exists()).toBe(true);
+    const dumpData = await dumpFile.json();
+    expect(dumpData).toHaveLength(1);
+    expect(dumpData[0].restartCount).toBe(7);
+    expect(dumpData[0].unstableRestarts).toBe(2);
+
+    // Stop and clear all processes to simulate daemon restart
+    await pm.deleteAll();
+    expect(pm.list()).toHaveLength(0);
+
+    // Resurrect in a new ProcessManager instance
+    const newPm = new ProcessManager();
+    const resurrected = await newPm.resurrect();
+
+    expect(resurrected).toHaveLength(1);
+    const resProc = resurrected[0]!;
+
+    // Verify process identification & counters
+    expect(resProc.name).toBe("custom-api");
+    expect(resProc.id).toBe(0);
+    expect(resProc.bm2_env.restart_time).toBe(7);
+    expect(resProc.bm2_env.unstable_restarts).toBe(2);
+
+    // Verify full configuration preservation
+    const env = resProc.bm2_env;
+    expect(env.interpreter).toBe("bun");
+    expect(env.interpreterArgs).toEqual(["run"]);
+    expect(env.args).toEqual(["--port", "8080"]);
+    expect(env.cwd).toBe(TEST_DIR);
+    expect(env.env.CUSTOM_VAR).toBe("true");
+    expect(env.env.NODE_ENV).toBe("production");
+    expect(env.maxRestarts).toBe(25);
+    expect(env.minUptime).toBe(2000);
+    expect(env.restartDelay).toBe(500);
+    expect(env.killTimeout).toBe(4000);
+    expect(env.maxMemoryRestart).toBe(512 * 1024 * 1024);
+    expect(env.watch).toBe(true);
+    expect(env.watchPaths).toEqual(["/some/watch/dir"]);
+    expect(env.ignoreWatch).toEqual(["node_modules", ".git"]);
+    expect(env.cronRestart).toBe("0 0 * * *");
+    expect(env.healthCheckUrl).toBe("http://localhost:8080/health");
+    expect(env.healthCheckInterval).toBe(15000);
+    expect(env.healthCheckTimeout).toBe(3000);
+    expect(env.healthCheckMaxFails).toBe(5);
+    expect(env.logMaxSize).toBe(20 * 1024 * 1024);
+    expect(env.logRetain).toBe(8);
+    expect(env.logCompress).toBe(true);
+    expect(env.namespace).toBe("backend");
+    expect(env.port).toBe(8080);
+
+    // Cleanup
+    await newPm.deleteAll();
+  });
+
+  test("should not duplicate processes when resurrect is called multiple times", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "server2.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    await pm.start({ name: "idempotent-app", script: scriptPath });
+    await pm.save();
+
+    const firstResurrect = await pm.resurrect();
+    expect(firstResurrect).toHaveLength(1);
+
+    const secondResurrect = await pm.resurrect();
+    expect(secondResurrect).toHaveLength(1);
+    expect(pm.list()).toHaveLength(1);
+
+    await pm.deleteAll();
+  });
+});
+
+describe("ProcessContainer Restart Budget & minUptime Behavior (Issue #23)", () => {
+  test("should exhaust restart budget on rapid crashes below minUptime", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "crash-immediately.ts");
+    // Process exits immediately
+    await writeFile(scriptPath, "process.exit(1);");
+
+    const started = await pm.start({
+      name: "crashing-app",
+      script: scriptPath,
+      minUptime: 200,
+      maxRestarts: 3,
+      restartDelay: 10,
+    });
+
+    const procId = started[0]!.id;
+    const container = (pm as any).processes.get(procId);
+
+    // Wait for crashes and restarts to exhaust budget
+    await Bun.sleep(250);
+
+    expect(container.unstableRestarts).toBeGreaterThanOrEqual(3);
+    expect(container.status).toBe("errored");
+
+    await pm.deleteAll();
+  });
+
+  test("should reset unstableRestarts budget when process survives minUptime", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "stable-then-exit.ts");
+    // A script that stays alive or can be controlled
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const started = await pm.start({
+      name: "stable-app",
+      script: scriptPath,
+      minUptime: 100,
+      maxRestarts: 2,
+      restartDelay: 10,
+    });
+
+    const procId = started[0]!.id;
+    const container = (pm as any).processes.get(procId);
+
+    // Simulate an unstable crash (< minUptime)
+    container.startedAt = Date.now();
+    (container as any).handleExit(1);
+    expect(container.unstableRestarts).toBe(1);
+
+    // Wait for restart
+    await Bun.sleep(50);
+    expect(container.status).toBe("online");
+
+    // Simulate surviving minUptime: set startedAt to 200ms in the past (> 100ms minUptime)
+    container.startedAt = Date.now() - 200;
+    (container as any).handleExit(1);
+
+    // unstableRestarts should be reset to 0 because uptime >= minUptime
+    expect(container.unstableRestarts).toBe(0);
+
+    // Lifetime restartCount should continue accumulating for observability
+    expect(container.restartCount).toBeGreaterThanOrEqual(1);
+
+    await pm.deleteAll();
+  });
+});

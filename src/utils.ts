@@ -97,13 +97,33 @@ export function getSystemInfo() {
 export function treeKill(pid: number, signal: string = "SIGTERM"): Promise<void> {
   return new Promise(async (resolve) => {
     try {
-      const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
-      const output = await new Response(result.stdout).text();
-      const childPids = output.trim().split("\n").filter(Boolean).map(Number);
-
-      for (const childPid of childPids) {
-        await treeKill(childPid, signal);
+      if (process.platform === "win32") {
+        try {
+          const forceFlag = signal === "SIGKILL" || signal === "SIGTERM" ? ["/F"] : [];
+          const proc = Bun.spawn(["taskkill", ...forceFlag, "/T", "/PID", String(pid)], {
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          await proc.exited;
+        } catch {
+          try {
+            process.kill(pid);
+          } catch {}
+        }
+        resolve();
+        return;
       }
+
+      // Unix: try pgrep -P to find and kill child processes recursively
+      try {
+        const result = Bun.spawn(["pgrep", "-P", String(pid)], { stdout: "pipe" });
+        const output = await new Response(result.stdout).text();
+        const childPids = output.trim().split("\n").filter(Boolean).map(Number);
+
+        for (const childPid of childPids) {
+          await treeKill(childPid, signal);
+        }
+      } catch {}
 
       try {
         process.kill(pid, signal as any);

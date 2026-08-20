@@ -62,7 +62,8 @@
 	},
 	"os": [
 		"linux",
-		"darwin"
+		"darwin",
+		"win32"
 	],
 	"dependencies": {
 		"chalk": "^5.6.2",

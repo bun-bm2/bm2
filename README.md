@@ -106,7 +106,7 @@ BM2 replaces PM2's Node.js internals with Bun-native APIs. It uses `Bun.spawn` f
 
 **Process Persistence** — Save the current process list and resurrect it after a daemon restart or system reboot. Combined with startup script generation, your applications survive server reboots.
 
-**Startup Script Generation** — Automatically generate and install systemd (Linux) or launchd (macOS) service configurations so the BM2 daemon starts at boot.
+**Startup Script Generation** — Automatically generate and install systemd (Linux), launchd (macOS), or Task Scheduler (Windows) service configurations so the BM2 daemon starts at boot.
 
 **Remote Deployment** — A built-in deploy system that handles SSH-based deployment with git pull, release directory management, symlink rotation, and pre/post-deploy hooks.
 
@@ -885,7 +885,7 @@ Multi-host deployment is supported. Specify an array of hosts to deploy to all o
 
 #### bm2 startup
 
-Generate and display a startup script for your operating system. On Linux, this generates a systemd unit file. On macOS, this generates a launchd plist.
+Generate and display a startup script for your operating system. On Linux, this generates a systemd unit file. On macOS, this generates a launchd plist. On Windows, this generates a Task Scheduler configuration and PowerShell script.
 
 ```
 bm2 startup
@@ -931,7 +931,7 @@ bm2 save
 bm2 startup install
 ```
 
-On reboot, systemd or launchd starts the BM2 daemon, and the daemon automatically runs resurrect to restore your processes.
+On reboot, systemd, launchd, or Task Scheduler starts the BM2 daemon, and the daemon automatically runs resurrect to restore your processes.
 
 ---
 

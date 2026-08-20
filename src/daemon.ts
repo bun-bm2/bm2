@@ -302,6 +302,14 @@ export default class Daemon {
         case "moduleList": {
           return { type: "moduleList", data: moduleManager.list(), success: true, id: msg.id };
         }
+        case "daemonReload": {
+          if (!this.server) {
+            this.server = this.startServer();
+          } else {
+            this.server.reload(this.getServerOpts() as any);
+          }
+          return { type: "daemonReload", data: "Daemon reloaded", success: true, id: msg.id };
+        }
         case "ping": {
           return {
             type: "pong",

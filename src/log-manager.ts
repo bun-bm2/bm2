@@ -14,13 +14,12 @@
  * Author: Zak <zak@maxxpainn.com>
  */
 
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { appendFile, rename, unlink, readdir } from "fs/promises";
 import { LOG_DIR, DEFAULT_LOG_MAX_SIZE, DEFAULT_LOG_RETAIN } from "./constants";
 import type {  LogEntry, LogRotateOptions } from "./types";
 import { watch } from "fs";
 import type { ReadableStreamController } from "bun";
-import { $ } from "bun"
 import { EOL } from 'node:os';
 
 const isoRegex: RegExp = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
@@ -152,11 +151,12 @@ export class LogManager {
 
       const level = (fp == paths.errFile) ? "err" : "out";
       
-      const rawLog = await $`tail -n ${lines} ${fp}`.text();
+      const rawLog = await f.text();
  
        return rawLog
          .split("\n")
          .filter(Boolean)
+         .slice(-lines)
          .map(l => this.parseLine(l, level));
       
     }))).flat();
@@ -168,8 +168,6 @@ export class LogManager {
     if (sortedLogs.length > lines) {
       sortedLogs = sortedLogs.slice(-lines)
     }
-    
-    console.log(sortedLogs)
       
     return sortedLogs
   }
@@ -243,8 +241,17 @@ export class LogManager {
         
         await rename(src, dst);
         if (options.compress) {
-          // Fire-and-forget compression doesn't block the next rename
-          bgTasks.push(Bun.spawn(["gzip", "-f", dst]).exited); 
+          bgTasks.push((async () => {
+            try {
+              const srcFile = Bun.file(dst);
+              if (await srcFile.exists()) {
+                const data = await srcFile.arrayBuffer();
+                const compressed = Bun.gzipSync(new Uint8Array(data));
+                await Bun.write(`${dst}.gz`, compressed);
+                await unlink(dst);
+              }
+            } catch {}
+          })());
         }
       }
     }
@@ -252,7 +259,7 @@ export class LogManager {
     await Bun.write(filePath, ""); // Instantly truncate and reclaim space
   
     const dir = dirname(filePath);
-    const baseName = filePath.split("/").pop()!;
+    const baseName = basename(filePath);
   
     // Background cleanup
     bgTasks.push(

@@ -245,5 +245,6 @@ export interface LogItem {
   name: string;
   id: number;
   ts: string;
-  msg: string; level?: "err" | "out"
-}[]
+  msg: string;
+  level?: "err" | "out";
+}

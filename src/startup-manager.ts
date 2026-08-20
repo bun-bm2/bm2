@@ -17,22 +17,42 @@
  import { join } from "path";
  import { $ } from "bun";
 
- export class StartupManager {
-   async generate(platform?: string): Promise<string> {
-     const os = platform || process.platform;
-     const bunPath = Bun.which("bun") || "/usr/local/bin/bun";
-     const bm2Path = join(import.meta.dir, "index.ts");
-     const daemonPath = join(import.meta.dir, "daemon.ts");
- 
-     switch (os) {
-       case "linux":
-         return this.generateSystemd(bunPath, bm2Path, daemonPath);
-       case "darwin":
-         return this.generateLaunchd(bunPath, bm2Path, daemonPath);
-       default:
-         throw new Error(`Unsupported platform: ${os}`);
-     }
-   }
+export class StartupManager {
+  async generate(platform?: string): Promise<string> {
+    const os = platform || process.platform;
+    const bunPath = Bun.which("bun") || (os === "win32" ? "bun.exe" : "/usr/local/bin/bun");
+    const bm2Path = join(import.meta.dir, "index.ts");
+    const daemonPath = join(import.meta.dir, "daemon.ts");
+
+    switch (os) {
+      case "linux":
+        return this.generateSystemd(bunPath, bm2Path, daemonPath);
+      case "darwin":
+        return this.generateLaunchd(bunPath, bm2Path, daemonPath);
+      case "win32":
+        return this.generateWindows(bunPath, bm2Path, daemonPath);
+      default:
+        throw new Error(`Unsupported platform: ${os}`);
+    }
+  }
+
+  private generateWindows(bunPath: string, bm2Path: string, daemonPath: string): string {
+    const taskName = "BM2_Daemon";
+    return `# BM2 Windows Startup Configuration
+# To install as a Scheduled Task that starts automatically on user logon:
+#
+# schtasks /create /tn "${taskName}" /tr "\\"${bunPath}\\" run \\"${daemonPath}\\"" /sc onlogon /f /rl highest
+#
+# Or run with PowerShell:
+# $Action = New-ScheduledTaskAction -Execute "${bunPath}" -Argument "run \\"${daemonPath}\\""
+# $Trigger = New-ScheduledTaskTrigger -AtLogOn
+# $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest
+# Register-ScheduledTask -TaskName "${taskName}" -Action $Action -Trigger $Trigger -Principal $Principal -Force
+#
+# To resurrect processes after startup:
+# "${bunPath}" run "${bm2Path}" resurrect
+`;
+  }
  
    private generateSystemd(bunPath: string, bm2Path: string, daemonPath: string): string {
      
@@ -137,41 +157,78 @@ ${plist}`;
        await $`systemctl start bm2`;
  
        return `Service installed at ${servicePath}`;
-     } else if (os === "darwin") {
-       const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
-       // Extract plist content
-       const plistStart = content.indexOf("<?xml");
-       const plistContent = content.substring(plistStart);
-       await Bun.write(plistPath, plistContent);
- 
-       return `Plist installed at ${plistPath}\nRun: launchctl load ${plistPath}`;
-     }
- 
-     return "Unsupported platform for auto-install. Manual setup required.";
-   }
- 
-   async uninstall(): Promise<string> {
-     const os = process.platform;
- 
-     if (os === "linux") {
-       
-       await $`systemctl stop bm2`;
-       await $`systemctl disable bm2`;
-              
-       await $`rm -f /etc/systemd/system/bm2.service`;
-       await $`systemctl daemon-reload`;
+    } else if (os === "darwin") {
+      const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+      // Extract plist content
+      const plistStart = content.indexOf("<?xml");
+      const plistContent = content.substring(plistStart);
+      await Bun.write(plistPath, plistContent);
+
+      return `Plist installed at ${plistPath}\nRun: launchctl load ${plistPath}`;
+    } else if (os === "win32") {
+      const bunPath = Bun.which("bun") || "bun.exe";
+      const daemonPath = join(import.meta.dir, "daemon.ts");
+      const taskName = "BM2_Daemon";
+
+      try {
+        const proc = Bun.spawn([
+          "schtasks",
+          "/create",
+          "/tn",
+          taskName,
+          "/tr",
+          `"${bunPath}" run "${daemonPath}"`,
+          "/sc",
+          "onlogon",
+          "/f",
+          "/rl",
+          "highest",
+        ], { stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+
+        return `Windows Scheduled Task "${taskName}" installed successfully.\nRun on demand: schtasks /run /tn "${taskName}"`;
+      } catch (err: any) {
+        return `Failed to create scheduled task: ${err.message}. Try running as Administrator.`;
+      }
+    }
+
+    return "Unsupported platform for auto-install. Manual setup required.";
+  }
+
+  async uninstall(): Promise<string> {
+    const os = process.platform;
+
+    if (os === "linux") {
       
-       return "BM2 service removed";
+      await $`systemctl stop bm2`;
+      await $`systemctl disable bm2`;
+             
+      await $`rm -f /etc/systemd/system/bm2.service`;
+      await $`systemctl daemon-reload`;
      
-     } else if (os === "darwin") {
-       
-       const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
-       
-       await $`launchctl unload ${plistPath}`;
-       await $`rm -f ${plistPath}`;
-       return "BM2 launch agent removed";
-     }
- 
-     return "Unsupported platform";
-   }
+      return "BM2 service removed";
+    
+    } else if (os === "darwin") {
+      
+      const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.bm2.daemon.plist`;
+      
+      await $`launchctl unload ${plistPath}`;
+      await $`rm -f ${plistPath}`;
+      return "BM2 launch agent removed";
+    } else if (os === "win32") {
+      const taskName = "BM2_Daemon";
+      try {
+        const proc = Bun.spawn(["schtasks", "/delete", "/tn", taskName, "/f"], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        return `Windows Scheduled Task "${taskName}" removed.`;
+      } catch (err: any) {
+        return `Failed to remove scheduled task: ${err.message}`;
+      }
+    }
+
+    return "Unsupported platform";
+  }
  }

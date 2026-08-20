@@ -166,11 +166,13 @@
      return stdout;
    }
  
-   private async localExec(command: string): Promise<string> {
-     const proc = Bun.spawn(["sh", "-c", command], {
-       stdout: "pipe",
-       stderr: "pipe",
-     });
+    private async localExec(command: string): Promise<string> {
+      const isWin = process.platform === "win32";
+      const cmd = isWin ? ["cmd.exe", "/c", command] : ["sh", "-c", command];
+      const proc = Bun.spawn(cmd, {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
  
      const stdout = await new Response(proc.stdout).text();
      const stderr = await new Response(proc.stderr).text();

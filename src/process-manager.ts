@@ -80,7 +80,7 @@ import type { ReadableStreamController } from "bun";
       for (let i = 0; i < resolvedInstances; i++) {
           
         const id = this.nextId++;
-        const baseName = options.name || options.script.split("/").pop()?.replace(/\.\w+$/, "") || `app-${id}`;
+        const baseName = options.name || path.basename(options.script).replace(/\.\w+$/, "") || `app-${id}`;
         const name = resolvedInstances > 1 ? `${baseName}-${i}` : baseName;
 
         const config = this.buildConfig(id, name, options, resolvedInstances, i);
@@ -103,7 +103,7 @@ import type { ReadableStreamController } from "bun";
       const id = this.nextId++;
       const name =
           options.name ||
-          options.script.split("/").pop()?.replace(/\.\w+$/, "") ||
+          path.basename(options.script).replace(/\.\w+$/, "") ||
           `app-${id}`;
   
       const config = this.buildConfig(id, name, options, 1, 0);
@@ -349,46 +349,74 @@ import type { ReadableStreamController } from "bun";
      }
    }
  
-   async save(): Promise<void> {
-     const data = Array.from(this.processes.values()).map((p) => ({
-       config: p.config,
-       restartCount: p.restartCount,
-     }));
-     await Bun.write(DUMP_FILE, JSON.stringify(data, null, 2));
-   }
- 
-   // src/process-manager.ts
+  async save(): Promise<void> {
+    const data = Array.from(this.processes.values()).map((p) => ({
+      config: p.config,
+      restartCount: p.restartCount,
+      unstableRestarts: p.unstableRestarts,
+    }));
+    await Bun.write(DUMP_FILE, JSON.stringify(data, null, 2));
+  }
 
-    async resurrect(): Promise<ProcessState[]> {
-      try {
-        const file = Bun.file(DUMP_FILE);
-        if (!(await file.exists())) return [];
-        const data = await file.json();
-        const states: ProcessState[] = [];
+  async resurrect(): Promise<ProcessState[]> {
+    try {
+      const file = Bun.file(DUMP_FILE);
+      if (!(await file.exists())) return [];
+      const data = await file.json();
+      const states: ProcessState[] = [];
 
-        for (const item of data) {
-          
-          //  Pass the FULL saved config to restore all options (interpreter, logs, cron, etc.)
-          const result = await this.start(item.config);
-          
-          // Restore the restart counts for continuity and observability
-          for (const proc of result) {
-            const container = this.processes.get(proc.pm_id);
-            if (container) {
-              container.restartCount = item.restartCount ?? 0;
-              container.unstableRestarts = item.unstableRestarts ?? 0;
-            }
-          }
-          states.push(...result);
+      for (const item of data) {
+        const savedConfig: ProcessDescription = item.config;
+        if (!savedConfig || !savedConfig.script) continue;
+
+        if (!(await Bun.file(savedConfig.script).exists())) {
+          console.warn(`[bm2] Cannot resurrect ${savedConfig.name}: script not found at ${savedConfig.script}`);
+          continue;
         }
 
-        return states;
-      
-      } catch (err) {
-        console.error("[bm2] Resurrect failed:", err);
-        return [];
+        let id = savedConfig.id;
+        if (id !== undefined && this.processes.has(id)) {
+          const existing = this.processes.get(id)!;
+          if (existing.status === "online" || existing.status === "launching") {
+            states.push(existing.getState());
+            continue;
+          }
+        } else if (id === undefined) {
+          id = this.nextId++;
+        }
+
+        if (id >= this.nextId) {
+          this.nextId = id + 1;
+        }
+
+        const config: ProcessDescription = {
+          ...savedConfig,
+          id,
+        };
+
+        const container = new ProcessContainer(
+          id,
+          config,
+          this.logManager,
+          this.clusterManager,
+          this.healthChecker,
+          this.cronManager
+        );
+
+        container.restartCount = item.restartCount ?? 0;
+        container.unstableRestarts = item.unstableRestarts ?? 0;
+
+        this.processes.set(id, container);
+        await container.start();
+        states.push(container.getState());
       }
+
+      return states;
+    } catch (err) {
+      console.error("[bm2] Resurrect failed:", err);
+      return [];
     }
+  }
  
    async startEcosystem(config: EcosystemConfig): Promise<ProcessState[]> {
      const states: ProcessState[] = [];

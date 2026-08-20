@@ -189,9 +189,10 @@ export class ProcessContainer {
   }
 
   private async startCluster(logPaths: { outFile: string; errFile: string }) {
+    const workerId = parseInt(this.config.env?.BM2_INSTANCE_ID || this.config.env?.NODE_APP_INSTANCE || "0") || 0;
     const proc = this.clusterManager.spawnWorker(
       this.config,
-      0,
+      workerId,
       this.config.instances,
       { stdout: "pipe", stderr: "pipe" }
     );

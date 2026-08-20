@@ -57,9 +57,9 @@ export class ClusterManager {
        const ext = config.script.split(".").pop()?.toLowerCase();
        if (ext === "ts" || ext === "tsx" || ext === "js" || ext === "jsx" || ext === "mjs") {
          cmd.push("bun", "run");
-       } else if (ext === "py") {
-         cmd.push("python3");
-       } else {
+        } else if (ext === "py") {
+          cmd.push(process.platform === "win32" ? "python" : "python3");
+        } else {
          cmd.push("bun", "run");
        }
      }

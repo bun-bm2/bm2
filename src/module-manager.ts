@@ -14,9 +14,9 @@
  * Author: Zak <zak@maxxpainn.com>
  */
 
- import { join } from "path";
+ import path, { join } from "path";
  import { MODULE_DIR } from "./constants";
- import { existsSync, readdirSync } from "fs";
+ import { existsSync, readdirSync, symlinkSync, cpSync } from "fs";
  import type { ProcessManager } from "./process-manager";
  
  export interface BM2Module {
@@ -43,10 +43,14 @@
          stdout: "pipe", stderr: "pipe",
        });
        await proc.exited;
-     } else if (moduleNameOrPath.startsWith("/") || moduleNameOrPath.startsWith(".")) {
-       // Local path - symlink
-       const { symlinkSync } = require("fs");
-       symlinkSync(moduleNameOrPath, targetDir);
+     } else if (path.isAbsolute(moduleNameOrPath) || moduleNameOrPath.startsWith(".")) {
+       // Local path - symlink / junction / copy fallback
+       try {
+         const symlinkType = process.platform === "win32" ? "junction" : "dir";
+         symlinkSync(moduleNameOrPath, targetDir, symlinkType);
+       } catch {
+         cpSync(moduleNameOrPath, targetDir, { recursive: true });
+       }
      } else {
        // npm package
        const proc = Bun.spawn(["bun", "add", moduleNameOrPath], {
