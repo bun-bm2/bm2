@@ -217,4 +217,16 @@ describe("Windows Support & Cross-Platform Compatibility", () => {
       await expect(treeKill(999999)).resolves.toBeUndefined();
     });
   });
+
+  describe("Daemon Startup on Windows", () => {
+    test("starts Daemon without accessing server.url on Unix socket", async () => {
+      const Daemon = (await import("../src/daemon")).default;
+      const { DAEMON_SOCKET } = await import("../src/constants");
+      const dm = new Daemon();
+      await dm.initialize(false);
+
+      expect(dm.initialized).toBe(true);
+      expect(dm.getServerOpts().unix).toBe(DAEMON_SOCKET);
+    });
+  });
 });

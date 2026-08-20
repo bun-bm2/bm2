@@ -25,6 +25,7 @@ import {
 import { ensureDirs } from "./utils";
 import type { DaemonMessage, DaemonResponse } from "./types";
 import type { ReadableStreamController, Server } from "bun";
+import { existsSync, unlinkSync } from "node:fs";
 
 
 export default class Daemon {
@@ -65,12 +66,14 @@ export default class Daemon {
 
     if (_daemonEnabled) {
 
-      const sock = Bun.file(DAEMON_SOCKET);
-
       // Clean up existing socket
-      if (await sock.exists()) {
-        try { await sock.delete(); } catch {}
-      }
+      try {
+        if (existsSync(DAEMON_SOCKET)) unlinkSync(DAEMON_SOCKET);
+      } catch {}
+      try {
+        const sock = Bun.file(DAEMON_SOCKET);
+        if (await sock.exists()) await sock.delete();
+      } catch {}
 
       // Write PID file
       await Bun.write(DAEMON_PID_FILE, String(process.pid));
@@ -350,5 +353,5 @@ if (import.meta.main) {
   const dm = new Daemon();
   await dm.initialize();           // initialize first — writes PID, sets up pm/dashboard
   const s = dm.startServer();      // then bind the socket
-  console.log(`Daemon listening on ${s.url}`);
+  console.log(`Daemon listening on ${DAEMON_SOCKET}`);
 }
