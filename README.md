@@ -23,7 +23,7 @@ BM2 is free and open-source software built for the Bun community. If BM2 saves y
 
 | Network / Ecosystem | Address |
 |---|---|
-| **Bitcoin (BTC)** | [![Copy Text](bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l)](bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l) |
+| **Bitcoin (BTC)** | ```sh bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l``` |
 | **EVM** *(Ethereum, Base, Arbitrum, BNB Chain, Avalanche)* | `0x52CcA569bB086acDb9388E3c7Cf0753c0337C2e1` |
 | **Solana** | `DKviNTJC9rst6tmQQgMVgd8QBsSztVPmd3d5MsPussUc` |
 | **Sui** | `0x789494019f07d318125263a1730bb651aeab0ebb68f8f77f838dbf3e67a755cd` |
