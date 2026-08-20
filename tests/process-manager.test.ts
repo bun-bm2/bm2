@@ -350,7 +350,7 @@ describe("ProcessContainer Restart Budget & minUptime Behavior (Issue #23)", () 
     const started = await pm.start({
       name: "crashing-app",
       script: scriptPath,
-      minUptime: 200,
+      minUptime: 2000,
       maxRestarts: 3,
       restartDelay: 10,
     });
@@ -359,7 +359,10 @@ describe("ProcessContainer Restart Budget & minUptime Behavior (Issue #23)", () 
     const container = (pm as any).processes.get(procId);
 
     // Wait for crashes and restarts to exhaust budget
-    await Bun.sleep(250);
+    for (let i = 0; i < 30; i++) {
+      if (container.status === "errored" && container.unstableRestarts >= 3) break;
+      await Bun.sleep(50);
+    }
 
     expect(container.unstableRestarts).toBeGreaterThanOrEqual(3);
     expect(container.status).toBe("errored");

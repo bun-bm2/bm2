@@ -14,7 +14,7 @@
  */
 
 import { EventEmitter } from "events";
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { resolve } from "path";
 import {
@@ -501,10 +501,11 @@ export class BM2 extends EventEmitter<BM2Events> {
 
   /** Check whether the daemon is running and reachable. */
   private async isDaemonAlive(): Promise<boolean> {
-    // Quick PID-file check first
-    if (existsSync(DAEMON_PID_FILE)) {
+    const pidFile = Bun.file(DAEMON_PID_FILE);
+    if (await pidFile.exists()) {
       try {
-        const pid = parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim());
+        const pidText = await pidFile.text();
+        const pid = parseInt(pidText.trim());
         process.kill(pid, 0); // throws if process doesn't exist
       } catch {
         // Stale PID file
@@ -515,7 +516,7 @@ export class BM2 extends EventEmitter<BM2Events> {
     }
 
     // Verify the socket is responsive
-    if (!existsSync(DAEMON_SOCKET)) return false;
+    if (!(await Bun.file(DAEMON_SOCKET).exists())) return false;
 
     try {
       const res = await this.send({ type: "ping" });

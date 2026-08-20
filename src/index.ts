@@ -94,10 +94,9 @@ class BM2CLI {
 
     console.error(colorize("Starting daemon..", "green"));
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 25; i++) {
       if (this.isDaemonRunning()) return;
-      await Bun.sleep(1_000);
-      console.error(colorize("Waiting for daemon..", "cyan"));
+      await Bun.sleep(200);
     }
 
     if (!this.isDaemonRunning()) {

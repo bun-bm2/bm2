@@ -153,7 +153,7 @@ export class LogManager {
       const rawLog = await f.text();
  
        return rawLog
-         .split("\n")
+         .split(/\r?\n/)
          .filter(Boolean)
          .slice(-lines)
          .map(l => this.parseLine(l, level));
@@ -206,12 +206,12 @@ export class LogManager {
         const chunk = await f.slice(lastSize, size).text();
         state[type] = size;
   
-        for (const line of chunk.split("\n").filter(Boolean)) {
+        for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
           try {
             const log = { name, id, ...this.parseLine(line, type) };
             streamController.enqueue(`data: ${JSON.stringify(log)}\n\n`);
-          } catch (e: any) {
-            console.log("tailLog: ", e, e.stack)
+          } catch {
+            clearInterval(poll);
             return;
           }
         }

@@ -67,7 +67,7 @@ import type { ReadableStreamController } from "bun";
     
     options.script = path.isAbsolute(options.script) 
       ? options.script
-      : path.join(options.cwd!, options.script);
+      : path.join(options.cwd || process.cwd(), options.script);
     
     
     if (!(await Bun.file(options.script).exists())) {
@@ -220,41 +220,44 @@ import type { ReadableStreamController } from "bun";
      return states;
    }
  
-   async stopAll(): Promise<ProcessState[]> {
-     const states: ProcessState[] = [];
-     for (const c of this.processes.values()) {
-       await c.stop();
-       states.push(c.getState());
-     }
-     return states;
-   }
- 
-   async restartAll(): Promise<ProcessState[]> {
-     const states: ProcessState[] = [];
-     for (const c of this.processes.values()) {
-       await c.restart();
-       states.push(c.getState());
-     }
-     return states;
-   }
- 
-   async reloadAll(): Promise<ProcessState[]> {
-     const containers = Array.from(this.processes.values());
-     await this.gracefulReload.reload(containers);
-     return containers.map((c) => c.getState());
-   }
- 
-   async deleteAll(): Promise<ProcessState[]> {
-     const states: ProcessState[] = [];
-     for (const c of this.processes.values()) {
-       await c.stop(true);
-       await Bun.sleep(100)
-       states.push(c.getState());
-     }
-     this.processes.clear();
-     this.nextId = 0;
-     return states;
-   }
+    async stopAll(): Promise<ProcessState[]> {
+      const states: ProcessState[] = [];
+      for (const c of this.processes.values()) {
+        await c.stop();
+        states.push(c.getState());
+      }
+      this.healthChecker.stopAll();
+      this.cronManager.cancelAll();
+      return states;
+    }
+
+    async restartAll(): Promise<ProcessState[]> {
+      const states: ProcessState[] = [];
+      for (const c of this.processes.values()) {
+        await c.restart();
+        states.push(c.getState());
+      }
+      return states;
+    }
+
+    async reloadAll(): Promise<ProcessState[]> {
+      const containers = Array.from(this.processes.values());
+      await this.gracefulReload.reload(containers);
+      return containers.map((c) => c.getState());
+    }
+
+    async deleteAll(): Promise<ProcessState[]> {
+      const states: ProcessState[] = [];
+      for (const c of this.processes.values()) {
+        await c.stop(true);
+        states.push(c.getState());
+      }
+      this.healthChecker.stopAll();
+      this.cronManager.cancelAll();
+      this.processes.clear();
+      this.nextId = 0;
+      return states;
+    }
  
    async scale(target: string | number, count: number): Promise<ProcessState[]> {
      const containers = this.resolveTarget(target);

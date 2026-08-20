@@ -18,6 +18,7 @@ import { getSystemInfo } from "./utils";
 import { METRICS_DIR } from "./constants";
 import { join } from "path";
 import pidusage from "pidusage";
+import { readdirSync } from "node:fs";
 
 export class Monitor {
   private history: MetricSnapshot[] = [];
@@ -43,9 +44,7 @@ export class Monitor {
          
           // Count file descriptors
           try {
-            const { readdirSync } = require("fs");
-            const fds = readdirSync(`/proc/${pid}/fd`);
-            handles = fds.length;
+            handles = readdirSync(`/proc/${pid}/fd`).length;
           } catch {}
         }
 
@@ -100,8 +99,8 @@ export class Monitor {
     };
 
     this.history.push(snapshot);
-    if (this.history.length > this.maxHistory) {
-      this.history = this.history.slice(-this.maxHistory);
+    while (this.history.length > this.maxHistory) {
+      this.history.shift();
     }
 
     return snapshot;

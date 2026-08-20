@@ -16,6 +16,7 @@
 import { join } from "path";
 import { ALL_DIRS, BM2_HOME } from "./constants";
 import { mkdir } from "fs/promises";
+import { totalmem, freemem, loadavg, platform, hostname, uptime } from "node:os";
 
 export const DUMP_FILE = join(BM2_HOME, "dump.json");
 
@@ -27,16 +28,22 @@ export async function ensureDirs() {
   );
 }
 
+const MEMORY_REGEX = /^(\d+(?:\.\d+)?)\s*(K|M|G|T)?B?$/i;
+const MEM_MULTIPLIERS: Record<string, number> = {
+  "": 1,
+  K: 1024,
+  M: 1024 ** 2,
+  G: 1024 ** 3,
+  T: 1024 ** 4,
+};
+
 export function parseMemory(value: string | number): number {
   if (typeof value === "number") return value;
-  const match = value.match(/^(\d+(?:\.\d+)?)\s*(K|M|G|T)?B?$/i);
+  const match = value.match(MEMORY_REGEX);
   if (!match) throw new Error(`Invalid memory value: ${value}`);
   const num = parseFloat(match[1]!);
   const unit = (match[2] || "").toUpperCase();
-  const multipliers: Record<string, number> = {
-    "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4,
-  };
-  return num * (multipliers[unit] || 1);
+  return num * (MEM_MULTIPLIERS[unit] || 1);
 }
 
 export function formatBytes(bytes: number): string {
@@ -61,14 +68,15 @@ export function generateId(): string {
   return crypto.randomUUID().replace(/-/g, "").substring(0, 12);
 }
 
+const ANSI_COLORS: Record<string, string> = {
+  red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+  blue: "\x1b[34m", magenta: "\x1b[35m", cyan: "\x1b[36m",
+  white: "\x1b[37m", gray: "\x1b[90m", bold: "\x1b[1m",
+  dim: "\x1b[2m", reset: "\x1b[0m",
+};
+
 export function colorize(text: string, color: string): string {
-  const colors: Record<string, string> = {
-    red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
-    blue: "\x1b[34m", magenta: "\x1b[35m", cyan: "\x1b[36m",
-    white: "\x1b[37m", gray: "\x1b[90m", bold: "\x1b[1m",
-    dim: "\x1b[2m", reset: "\x1b[0m",
-  };
-  return `${colors[color] || ""}${text}\x1b[0m`;
+  return `${ANSI_COLORS[color] || ""}${text}\x1b[0m`;
 }
 
 export function padRight(str: string, len: number): string {
@@ -76,20 +84,20 @@ export function padRight(str: string, len: number): string {
 }
 
 export function getCpuCount(): number {
-  const cpus = require("os").cpus();
-  return cpus.length;
+  return typeof navigator !== "undefined" && navigator.hardwareConcurrency
+    ? navigator.hardwareConcurrency
+    : 1;
 }
 
 export function getSystemInfo() {
-  const os = require("os");
   return {
-    totalMemory: os.totalmem(),
-    freeMemory: os.freemem(),
-    cpuCount: os.cpus().length,
-    loadAvg: os.loadavg(),
-    platform: os.platform(),
-    hostname: os.hostname(),
-    uptime: os.uptime(),
+    totalMemory: totalmem(),
+    freeMemory: freemem(),
+    cpuCount: getCpuCount(),
+    loadAvg: loadavg(),
+    platform: platform(),
+    hostname: hostname(),
+    uptime: uptime(),
   };
 }
 

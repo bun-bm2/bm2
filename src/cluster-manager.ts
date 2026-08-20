@@ -49,19 +49,25 @@ export class ClusterManager {
    buildWorkerCommand(config: ProcessDescription): string[] {
      const cmd: string[] = [];
  
-     if (config.interpreter) {
-       cmd.push(config.interpreter);
-       if (config.interpreterArgs) cmd.push(...config.interpreterArgs);
-     } else {
-       const ext = config.script.split(".").pop()?.toLowerCase();
-       if (ext === "ts" || ext === "tsx" || ext === "js" || ext === "jsx" || ext === "mjs") {
-         cmd.push("bun", "run");
+      if (config.interpreter) {
+        cmd.push(config.interpreter);
+        if (config.interpreterArgs) cmd.push(...config.interpreterArgs);
+      } else {
+        const ext = path.extname(config.script).slice(1).toLowerCase();
+        if (ext === "ts" || ext === "tsx" || ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs") {
+          cmd.push("bun", "run");
         } else if (ext === "py") {
           cmd.push(process.platform === "win32" ? "python" : "python3");
+        } else if (ext === "bat" || ext === "cmd") {
+          cmd.push("cmd.exe", "/c");
+        } else if (ext === "ps1") {
+          cmd.push("powershell.exe", "-ExecutionPolicy", "Bypass", "-File");
+        } else if (ext === "sh") {
+          cmd.push("sh");
         } else {
-         cmd.push("bun", "run");
-       }
-     }
+          cmd.push("bun", "run");
+        }
+      }
  
      if (config.nodeArgs?.length) {
        cmd.push(...config.nodeArgs);

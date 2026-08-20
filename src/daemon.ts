@@ -82,7 +82,7 @@ export default class Daemon {
 
     this.metricsInterval = setInterval(() => {
       this.pm!.getMetrics();
-    }, 2000);
+    }, 5000);
 
     this.initialized = true;
 

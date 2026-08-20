@@ -55,6 +55,58 @@ describe("Windows Support & Cross-Platform Compatibility", () => {
       }
     });
 
+    test("builds worker command with cmd.exe for .bat and .cmd on Windows", () => {
+      const cm = new ClusterManager();
+      const config: ProcessDescription = {
+        id: 0,
+        name: "bat-app",
+        script: "C:\\scripts\\run.bat",
+        args: ["arg1"],
+        cwd: "C:\\scripts",
+        env: {},
+        instances: 1,
+        execMode: "fork",
+        autorestart: true,
+        maxRestarts: 10,
+        minUptime: 1000,
+        watch: false,
+        mergeLogs: false,
+        raw: false,
+        killTimeout: 5000,
+        restartDelay: 0,
+      };
+
+      const cmd = cm.buildWorkerCommand(config);
+      expect(cmd[0]).toBe("cmd.exe");
+      expect(cmd[1]).toBe("/c");
+    });
+
+    test("builds worker command with powershell.exe for .ps1 on Windows", () => {
+      const cm = new ClusterManager();
+      const config: ProcessDescription = {
+        id: 0,
+        name: "ps-app",
+        script: "C:\\scripts\\run.ps1",
+        args: [],
+        cwd: "C:\\scripts",
+        env: {},
+        instances: 1,
+        execMode: "fork",
+        autorestart: true,
+        maxRestarts: 10,
+        minUptime: 1000,
+        watch: false,
+        mergeLogs: false,
+        raw: false,
+        killTimeout: 5000,
+        restartDelay: 0,
+      };
+
+      const cmd = cm.buildWorkerCommand(config);
+      expect(cmd[0]).toBe("powershell.exe");
+      expect(cmd).toContain("-File");
+    });
+
     test("builds worker command with bun for js/ts", () => {
       const cm = new ClusterManager();
       const config: ProcessDescription = {
@@ -137,6 +189,23 @@ describe("Windows Support & Cross-Platform Compatibility", () => {
       expect(logs).toHaveLength(2);
       expect(logs[0]!.msg).toBe("Line 2");
       expect(logs[1]!.msg).toBe("Line 3");
+
+      await rm(TEST_DIR, { recursive: true, force: true });
+    });
+
+    test("handles Windows CRLF line breaks in log files", async () => {
+      await mkdir(TEST_DIR, { recursive: true });
+      const lm = new LogManager();
+      const outFile = join(TEST_DIR, "crlf-test-out.log");
+      const errFile = join(TEST_DIR, "crlf-test-err.log");
+
+      const rawContent = '{"ts":"2026-01-01T00:00:00.000Z","msg":"Windows log 1"}\r\n{"ts":"2026-01-01T00:00:01.000Z","msg":"Windows log 2"}\r\n';
+      await writeFile(outFile, rawContent);
+
+      const logs = await lm.readLogs("crlf-test", 0, 10, outFile, errFile);
+      expect(logs).toHaveLength(2);
+      expect(logs[0]!.msg).toBe("Windows log 1");
+      expect(logs[1]!.msg).toBe("Windows log 2");
 
       await rm(TEST_DIR, { recursive: true, force: true });
     });

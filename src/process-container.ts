@@ -33,7 +33,7 @@ import {
 } from "./constants";
 import pidusage from "pidusage";
 import { readdir } from "node:fs/promises";
-
+import { watch } from "node:fs";
 
 export class ProcessContainer {
   public id: number;
@@ -57,7 +57,7 @@ export class ProcessContainer {
   private healthChecker: HealthChecker;
   private cronManager: CronManager;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
-  private watcher: ReturnType<typeof import("fs").watch> | null = null;
+  private watchers: ReturnType<typeof watch>[] = [];
   private monitorInterval: ReturnType<typeof setInterval> | null = null;
   private logRotateInterval: ReturnType<typeof setInterval> | null = null;
   private isRestarting: boolean = false;
@@ -230,11 +230,6 @@ export class ProcessContainer {
   ) {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
-
-    
-    // Holds the tail of the last chunk if it did not end on a newline.
-    // Without this, a chunk boundary mid-word (e.g. "hel" / "lo\n") would be
-    // written as two separate log lines, corrupting the output.
     let remainder = "";
 
     try {
@@ -242,17 +237,13 @@ export class ProcessContainer {
         const { done, value } = await reader.read();
         
         if (done) {
-          // Flush any buffered content that was never terminated with \n
-          if (remainder.length > 0) {
-            await this.logManager.appendJSONLog(filePath, remainder)
+          if (remainder.trim().length > 0) {
+            await this.logManager.appendJSONLog(filePath, remainder);
             remainder = "";
           }
           break;
         }
 
-        // Keep the manager's log files while exposing the child output to the
-        // foreground process (and therefore to `docker logs`) when requested.
-        // Forward bytes instead of decoded strings so log content is unchanged.
         if (this.config.raw) {
           if (output === "stdout") {
             process.stdout.write(value);
@@ -261,20 +252,18 @@ export class ProcessContainer {
           }
         }
 
-        // stream=true tells the decoder to hold multi-byte UTF-8 sequences
-        // that straddle chunk boundaries rather than emitting replacement chars.
-        const chunk = decoder.decode(value, { stream: true });
+        const text = remainder + decoder.decode(value, { stream: true });
+        const lines = text.split("\n");
+        remainder = lines.pop() || "";
 
-        // Prepend any leftover from the previous chunk before splitting.
-        // This is a single string allocation per chunk (not per line), so
-        // allocation pressure stays O(chunk size) rather than O(line count).
-        const text = (remainder + chunk).trim();
-
-        await this.logManager.appendJSONLog(filePath, text);
+        for (const line of lines) {
+          if (line.length > 0) {
+            await this.logManager.appendJSONLog(filePath, line);
+          }
+        }
       }
     } catch {
-      // Flush remainder on unexpected stream error
-      if (remainder.length > 0) {
+      if (remainder.trim().length > 0) {
         await this.logManager.appendJSONLog(filePath, remainder).catch(() => {});
       }
     }
@@ -332,7 +321,6 @@ export class ProcessContainer {
   }
 
   private setupWatch() {
-    const { watch } = require("fs");
     const paths = this.config.watchPaths || [this.config.cwd || process.cwd()];
     const ignorePatterns = this.config.ignoreWatch || ["node_modules", ".git", ".bm2"];
 
@@ -340,7 +328,7 @@ export class ProcessContainer {
 
     for (const watchPath of paths) {
       try {
-        this.watcher = watch(
+        const w = watch(
           watchPath,
           { recursive: true },
           (_event: string, filename: string | null) => {
@@ -354,19 +342,22 @@ export class ProcessContainer {
             }, 1000);
           }
         );
+        this.watchers.push(w);
       } catch {}
     }
   }
 
-  // src/process-container.ts (inside the ProcessContainer class)
-  
   private handleExit(code: number | null) {
     const wasOnline = this.status === "online";
+    const oldPid = this.pid;
     this.status = code === 0 ? "stopped" : "errored";
     this.pid = undefined;
     this.process = null;
   
     this.cleanupTimers();
+    if (oldPid) {
+      try { (pidusage as any).clear(oldPid); } catch {}
+    }
   
     const uptime = Date.now() - this.startedAt;
   
@@ -428,10 +419,12 @@ export class ProcessContainer {
 
     this.cleanupTimers();
 
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
+    for (const w of this.watchers) {
+      try { w.close(); } catch {}
     }
+    this.watchers = [];
+
+    const oldPid = this.pid;
 
     if (this.process && this.pid) {
       if (this.config.treekill !== false) {
@@ -444,7 +437,7 @@ export class ProcessContainer {
         const timeout = this.config.killTimeout || 5000;
         const exited = await Promise.race([
           this?.process?.exited.then(() => true),
-          new Promise<boolean>((r) => setTimeout(() => r(false), timeout)),
+          Bun.sleep(timeout).then(() => false),
         ]);
 
         if (!exited && this.process) {
@@ -463,6 +456,10 @@ export class ProcessContainer {
         }
         await this?.process?.exited;
       }
+    }
+
+    if (oldPid) {
+      try { (pidusage as any).clear(oldPid); } catch {}
     }
 
     // Clean up cluster workers
@@ -495,7 +492,7 @@ export class ProcessContainer {
     await this.start();
 
     // Wait for new process to be stable
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await Bun.sleep(2000);
 
     // Kill old process
     if (oldProcess && oldPid) {
@@ -506,6 +503,7 @@ export class ProcessContainer {
           oldProcess.kill("SIGTERM" as any);
         }
       } catch {}
+      try { (pidusage as any).clear(oldPid); } catch {}
     }
 
     this.isRestarting = false;

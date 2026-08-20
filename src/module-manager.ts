@@ -15,7 +15,7 @@
 
  import path, { join } from "path";
  import { MODULE_DIR } from "./constants";
- import { existsSync, readdirSync, symlinkSync, cpSync } from "fs";
+ import { existsSync, readdirSync, symlinkSync, cpSync, rmSync } from "fs";
  import type { ProcessManager } from "./process-manager";
  
  export interface BM2Module {
@@ -95,11 +95,10 @@
      if (mod?.destroy) await mod.destroy();
      this.modules.delete(name);
  
-     const modPath = join(MODULE_DIR, name);
-     if (existsSync(modPath)) {
-       const { rmSync } = require("fs");
-       rmSync(modPath, { recursive: true, force: true });
-     }
+    const modPath = join(MODULE_DIR, name);
+    if (existsSync(modPath)) {
+      rmSync(modPath, { recursive: true, force: true });
+    }
    }
  
    async loadAll(): Promise<void> {
