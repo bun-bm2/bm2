@@ -8,10 +8,6 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 ![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)
 [![Tests](https://github.com/bun-bm2/bm2/actions/workflows/test.yml/badge.svg)](https://github.com/bun-bm2/bm2/actions/workflows/test.yml)
 
-**Created by the MaxxPainn Team**
-🌐 [https://maxxpainn.com](https://maxxpainn.com)
-📧 Support: [zak@maxxpainn.com](mailto:zak@maxxpainn.com)
-
 ---
 
 ## Table of Contents
@@ -120,12 +116,19 @@ BM2 replaces PM2's Node.js internals with Bun-native APIs. It uses `Bun.spawn` f
 
 ## Requirements
 
-Bun version 1.0 or higher is required. BM2 is built exclusively for the Bun runtime.
+- **Runtime:** Bun version 1.0 or higher.
+- **Platforms:** Linux, macOS, and Windows.
 
 Install Bun if you haven't already:
 
-```
+**Linux / macOS:**
+```bash
 curl -fsSL https://bun.sh/install | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+powershell -c "irm bun.sh/install.ps1 | iex"
 ```
 
 ---
@@ -885,25 +888,39 @@ Multi-host deployment is supported. Specify an array of hosts to deploy to all o
 
 #### bm2 startup
 
-Generate and display a startup script for your operating system. On Linux, this generates a systemd unit file. On macOS, this generates a launchd plist. On Windows, this generates a Task Scheduler configuration and PowerShell script.
+Generate and display a startup script for your operating system:
+- **Linux:** Generates a `systemd` service unit file (`/etc/systemd/system/bm2.service`).
+- **macOS:** Generates a `launchd` plist (`~/Library/LaunchAgents/com.bm2.daemon.plist`).
+- **Windows:** Generates a Windows Task Scheduler command (`schtasks`) and PowerShell task configuration.
 
-```
+```bash
 bm2 startup
+```
+
+On Windows, you can also specify the platform explicitly:
+```powershell
+bm2 startup win32
 ```
 
 #### bm2 startup install
 
-Automatically install the startup script so the BM2 daemon starts at boot.
+Automatically install the startup script so the BM2 daemon starts at boot / logon:
 
-```
+```bash
+# Linux (sudo) / macOS
+bm2 startup install
+
+# Windows (Command Prompt / PowerShell as Administrator)
 bm2 startup install
 ```
 
+On Windows, this registers a Scheduled Task (`BM2_Daemon`) configured to start automatically on user logon with highest privileges.
+
 #### bm2 startup uninstall
 
-Remove the startup script.
+Remove the startup service / scheduled task:
 
-```
+```bash
 bm2 startup uninstall
 ```
 
@@ -2309,7 +2326,7 @@ Contributions are welcome. Please follow these guidelines:
 ### Development Setup
 
 ```
-git clone https://github.com/aspect-dev/bm2.git
+git clone https://github.com/bun-bm2/bm2.git
 cd bm2
 bun install
 bun run src/index.ts list
@@ -2322,15 +2339,10 @@ bun test
 
 GPL-3.0-only
 
-Copyright (c) 2025 MaxxPainn Team
+Copyright (c) 2025 bun-bm2
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
----
-
-**Built with ❤️ by the [MaxxPainn Team](https://maxxpainn.com)**
-📧 Support: [zak@maxxpainn.com](mailto:zak@maxxpainn.com)

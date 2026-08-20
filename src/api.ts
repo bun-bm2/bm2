@@ -11,7 +11,6 @@
  *   await bm2.disconnect();
  *
  * License: GPL-3.0-only
- * Author: Zak <zak@maxxpainn.com>
  */
 
 import { EventEmitter } from "events";

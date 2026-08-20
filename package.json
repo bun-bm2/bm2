@@ -42,19 +42,14 @@
 		"health-check",
 		"bm2"
 	],
-	"author": {
-		"name": "MaxxPainn",
-		"email": "hello@maxxpainn.com",
-		"url": "https://maxxpainn.com"
-	},
+	"author": "bun-bm2",
 	"license": "GPL-3.0",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/bun-bm2/bm2.git"
 	},
 	"bugs": {
-		"url": "https://github.com/bun-bm2/bm2/issues",
-		"email": "hello@maxxpainn.com"
+		"url": "https://github.com/bun-bm2/bm2/issues"
 	},
 	"homepage": "https://github.com/bun-bm2/bm2#readme",
 	"engines": {
