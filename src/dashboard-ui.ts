@@ -1,6 +1,17 @@
 /**
  * BM2 — Bun Process Manager
  * A production-grade process manager for Bun.
+ *
+ * Features:
+ * - Fork & cluster execution modes
+ * - Auto-restart & crash recovery
+ * - Health checks & monitoring
+ * - Log management & rotation
+ * - Deployment support
+ *
+ * https://github.com/your-org/bm2
+ * License: GPL-3.0-only
+ * Author: Zak <zak@maxxpainn.com>
  */
 export function getDashboardHTML(): string {
   return `<!DOCTYPE html>
@@ -109,6 +120,7 @@ const WS_URL = location.origin.replace('http','ws') + '/ws';
 let ws;
 let chartData = { labels: [], cpu: [], memory: [] };
 let selectedLogProcess = null;
+let processesData = []; // Global state to avoid double-escaping from DOM
 
 // XSS Prevention Helper
 function escapeHtml(unsafe) {
@@ -192,6 +204,9 @@ function render(state) {
   }
   drawChart();
 
+  // Save processes globally so viewLogs can use them without DOM parsing
+  processesData = processes; 
+
   if (processes.length === 0) {
     document.getElementById('process-table').innerHTML = '<tr><td colspan="9" class="empty-state">No processes running</td></tr>';
     document.getElementById('log-tabs').innerHTML = '';
@@ -211,27 +226,24 @@ function render(state) {
       <td class="actions">
         <button class="btn success" title="Restart" onclick="send('restart',{target:'\${p.pm_id}'})">↻</button>
         <button class="btn danger" title="Stop" onclick="send('stop',{target:'\${p.pm_id}'})">■</button>
-        <button class="btn" title="View Logs" onclick="viewLogs(\${p.pm_id}, '\${escapeHtml(p.name)}')">📋</button>
+        <button class="btn" title="View Logs" onclick="viewLogs(\${p.pm_id})">📋</button>
       </td>
     </tr>
   \`).join('');
 
   document.getElementById('log-tabs').innerHTML = processes.map(p => \`
-    <div class="tab \${selectedLogProcess === p.pm_id ? 'active' : ''}" onclick="viewLogs(\${p.pm_id}, '\${escapeHtml(p.name)}')" title="\${escapeHtml(p.name)}">\${escapeHtml(p.name)}</div>
+    <div class="tab \${selectedLogProcess === p.pm_id ? 'active' : ''}" onclick="viewLogs(\${p.pm_id})" title="\${escapeHtml(p.name)}">\${escapeHtml(p.name)}</div>
   \`).join('');
 }
 
-function viewLogs(id, name) {
-  selectedLogProcess = id;
+function viewLogs(id) {
+  selectedLogProcess = Number(id);
   document.getElementById('log-output').innerHTML = '<div class="empty-state">Loading logs...</div>';
-  send('getLogs', { target: id, lines: 50 });
+  send('getLogs', { target: selectedLogProcess, lines: 50 });
   
-  // Re-render tabs to update active state based on current DOM data
-  const processes = Array.from(document.querySelectorAll('#process-table tr')).map(row => {
-    return { pm_id: parseInt(row.cells[0].innerText), name: row.cells[1].title };
-  });
-  document.getElementById('log-tabs').innerHTML = processes.map(p => \`
-    <div class="tab \${selectedLogProcess === p.pm_id ? 'active' : ''}" onclick="viewLogs(\${p.pm_id}, '\${escapeHtml(p.name)}')" title="\${escapeHtml(p.name)}">\${escapeHtml(p.name)}</div>
+  // Re-render tabs using global processesData (prevents double-escaping from DOM)
+  document.getElementById('log-tabs').innerHTML = processesData.map(p => \`
+    <div class="tab \${selectedLogProcess === p.pm_id ? 'active' : ''}" onclick="viewLogs(\${p.pm_id})" title="\${escapeHtml(p.name)}">\${escapeHtml(p.name)}</div>
   \`).join('');
 }
 
@@ -243,14 +255,14 @@ function renderLogs(logs) {
   const el = document.getElementById('log-output');
   let html = '';
   for (const log of logs) {
-    if (log.out) html += log.out.split('\\n').map(l => {
-      const safeLine = escapeHtml(l);
+    if (log.out) html += log.out.split('\\n').map(line => {
+      const safeLine = escapeHtml(line);
       const m = safeLine.match(/^\\[([^\\]]+)\\]/);
       return m ? '<span class="timestamp">['+m[1]+']</span>'+safeLine.slice(m[0].length) : safeLine;
     }).join('\\n') + '\\n';
     
-    if (log.err) html += log.err.split('\\n').map(l => {
-      const safeLine = escapeHtml(l);
+    if (log.err) html += log.err.split('\\n').map(line => {
+      const safeLine = escapeHtml(line);
       return '<span class="err">'+safeLine+'</span>';
     }).join('\\n') + '\\n';
   }
