@@ -11,7 +11,7 @@ The modern PM2 replacement — zero Node.js dependencies, pure Bun performance.
 
 ---
 
-### 💖 Support & Sponsor BM2
+### Support BM2
 
 BM2 is free and open-source software built for the Bun community. If BM2 saves you time or powers your production services, please consider supporting its development:
 
@@ -19,16 +19,12 @@ BM2 is free and open-source software built for the Bun community. If BM2 saves y
 - 🐛 **Contribute:** Open issues, suggest features, or submit pull requests.
 
 
-### 💖 **Sponsor:** Support ongoing maintenance
+### 💖 **Sponsor** ongoing maintenance
 #### Crypto Donations
 
 | Network / Ecosystem | Address |
 |---|---|
-| **Bitcoin (BTC)** | 
-  ```bash 
-    bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l
-  ``` 
-|
+| **Bitcoin (BTC)** | `bc1qkyxtyxsqw263268sp6uns5r6ag6h2864mkss5l` |
 | **EVM** *(Ethereum, Base, Arbitrum, BNB Chain, Avalanche)* | `0x52CcA569bB086acDb9388E3c7Cf0753c0337C2e1` |
 | **Solana** | `DKviNTJC9rst6tmQQgMVgd8QBsSztVPmd3d5MsPussUc` |
 | **Sui** | `0x789494019f07d318125263a1730bb651aeab0ebb68f8f77f838dbf3e67a755cd` |
