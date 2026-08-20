@@ -358,37 +358,47 @@ export class ProcessContainer {
     }
   }
 
+  // src/process-container.ts (inside the ProcessContainer class)
+  
   private handleExit(code: number | null) {
     const wasOnline = this.status === "online";
     this.status = code === 0 ? "stopped" : "errored";
     this.pid = undefined;
     this.process = null;
-
+  
     this.cleanupTimers();
-
+  
     const uptime = Date.now() - this.startedAt;
-
-    if (wasOnline && this.config.autorestart && this.restartCount < this.config.maxRestarts) {
+  
+    if (wasOnline && this.config.autorestart) {
       if (uptime < this.config.minUptime) {
         this.unstableRestarts++;
+        // Cap consecutive unstable restarts
+        if (this.unstableRestarts >= this.config.maxRestarts) {
+          console.log(`[bm2] ${this.name} reached max consecutive unstable restarts (${this.config.maxRestarts}), not restarting`);
+          this.status = "errored";
+          return;
+        }
+      } else {
+        // Process survived minUptime: reset the consecutive unstable restart budget
+        this.unstableRestarts = 0;
       }
-
+  
       this.status = "waiting-restart";
       const delay = this.config.restartDelay || 0;
-
+  
       this.restartTimer = setTimeout(() => {
-        this.restartCount++;
-        console.log(`[bm2] Restarting ${this.name} (attempt ${this.restartCount}/${this.config.maxRestarts})`);
+        this.restartCount++; // Keep cumulative for observability
+        console.log(`[bm2] Restarting ${this.name} (cumulative attempt ${this.restartCount})`);
         this.start().catch((err) => {
           console.error(`[bm2] Failed to restart ${this.name}:`, err);
         });
       }, delay);
-    } else if (this.restartCount >= this.config.maxRestarts) {
-      console.log(`[bm2] ${this.name} reached max restarts (${this.config.maxRestarts}), not restarting`);
-      this.status = "errored";
+    } else if (!this.config.autorestart) {
+      this.status = "stopped";
     }
   }
-
+  
   private cleanupTimers() {
     if (this.monitorInterval) {
       clearInterval(this.monitorInterval);
