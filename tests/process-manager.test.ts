@@ -410,3 +410,247 @@ describe("ProcessContainer Restart Budget & minUptime Behavior (Issue #23)", () 
     await pm.deleteAll();
   });
 });
+
+describe("Duplicate Process Prevention & Existing Process Resumption (Issue #26)", () => {
+  test("should do nothing and return existing process when already running (named process)", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "idempotent-server.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const firstStart = await pm.start({
+      name: "my-service",
+      script: scriptPath,
+    });
+    expect(firstStart).toHaveLength(1);
+    expect(firstStart[0]!.name).toBe("my-service");
+    expect(firstStart[0]!.id).toBe(0);
+    expect(firstStart[0]!.status).toBe("online");
+    const originalPid = firstStart[0]!.pid;
+
+    // Second start with same config while already running
+    const secondStart = await pm.start({
+      name: "my-service",
+      script: scriptPath,
+    });
+    expect(secondStart).toHaveLength(1);
+    expect(secondStart[0]!.name).toBe("my-service");
+    expect(secondStart[0]!.id).toBe(0);
+    expect(secondStart[0]!.status).toBe("online");
+    expect(secondStart[0]!.pid).toBe(originalPid);
+
+    // Total processes in pm should still be 1
+    expect(pm.list()).toHaveLength(1);
+
+    await pm.deleteAll();
+  });
+
+  test("should do nothing and return existing process when already running (unnamed process)", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "unnamed-app.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const firstStart = await pm.start({
+      script: scriptPath,
+    });
+    expect(firstStart).toHaveLength(1);
+    expect(firstStart[0]!.name).toBe("unnamed-app");
+    expect(firstStart[0]!.id).toBe(0);
+    expect(firstStart[0]!.status).toBe("online");
+    const originalPid = firstStart[0]!.pid;
+
+    // Second start with same script path
+    const secondStart = await pm.start({
+      script: scriptPath,
+    });
+    expect(secondStart).toHaveLength(1);
+    expect(secondStart[0]!.name).toBe("unnamed-app");
+    expect(secondStart[0]!.id).toBe(0);
+    expect(secondStart[0]!.status).toBe("online");
+    expect(secondStart[0]!.pid).toBe(originalPid);
+
+    // Total processes in pm should still be 1
+    expect(pm.list()).toHaveLength(1);
+
+    await pm.deleteAll();
+  });
+
+  test("should resume stopped process on start instead of creating duplicate", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "stoppable-app.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const firstStart = await pm.start({
+      name: "stoppable-app",
+      script: scriptPath,
+    });
+    expect(firstStart).toHaveLength(1);
+    expect(firstStart[0]!.status).toBe("online");
+    const originalId = firstStart[0]!.id;
+
+    // Stop the process
+    const stopped = await pm.stop("stoppable-app");
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.status).toBe("stopped");
+
+    // Start again with same config — should resume existing process
+    const resumed = await pm.start({
+      name: "stoppable-app",
+      script: scriptPath,
+    });
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]!.id).toBe(originalId);
+    expect(resumed[0]!.status).toBe("online");
+
+    // Total processes in pm should still be 1
+    expect(pm.list()).toHaveLength(1);
+
+    await pm.deleteAll();
+  });
+
+  test("should resume errored process on start and reset unstableRestarts", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "errored-app.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const started = await pm.start({
+      name: "errored-app",
+      script: scriptPath,
+    });
+    const container = (pm as any).processes.get(started[0]!.id);
+
+    // Manually put container into errored status
+    container.status = "errored";
+    container.unstableRestarts = 5;
+
+    // Start again with same config
+    const resumed = await pm.start({
+      name: "errored-app",
+      script: scriptPath,
+    });
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]!.id).toBe(started[0]!.id);
+    expect(resumed[0]!.status).toBe("online");
+    expect(container.unstableRestarts).toBe(0);
+
+    expect(pm.list()).toHaveLength(1);
+
+    await pm.deleteAll();
+  });
+
+  test("should handle cluster mode without creating duplicate processes", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "cluster-app.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const firstStart = await pm.start({
+      name: "cluster-worker",
+      script: scriptPath,
+      instances: 2,
+    });
+    expect(firstStart).toHaveLength(2);
+    expect(pm.list()).toHaveLength(2);
+
+    // Second start while running
+    const secondStart = await pm.start({
+      name: "cluster-worker",
+      script: scriptPath,
+      instances: 2,
+    });
+    expect(secondStart).toHaveLength(2);
+    expect(pm.list()).toHaveLength(2);
+
+    // Stop cluster
+    await pm.stop("cluster-worker");
+    for (const p of pm.list()) {
+      expect(p.status).toBe("stopped");
+    }
+
+    // Start cluster again -> resumes all instances
+    const resumed = await pm.start({
+      name: "cluster-worker",
+      script: scriptPath,
+      instances: 2,
+    });
+    expect(resumed).toHaveLength(2);
+    for (const p of pm.list()) {
+      expect(p.status).toBe("online");
+    }
+    expect(pm.list()).toHaveLength(2);
+
+    await pm.deleteAll();
+  });
+
+  test("should start new process when explicit name is different for same script", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptPath = join(TEST_DIR, "shared-script.ts");
+    await writeFile(scriptPath, "setInterval(() => {}, 1000);");
+
+    const procA = await pm.start({
+      name: "instance-a",
+      script: scriptPath,
+    });
+    const procB = await pm.start({
+      name: "instance-b",
+      script: scriptPath,
+    });
+
+    expect(procA[0]!.name).toBe("instance-a");
+    expect(procB[0]!.name).toBe("instance-b");
+    expect(pm.list()).toHaveLength(2);
+
+    // Starting instance-a again should not duplicate instance-a or instance-b
+    const restartA = await pm.start({
+      name: "instance-a",
+      script: scriptPath,
+    });
+    expect(restartA[0]!.id).toBe(procA[0]!.id);
+    expect(pm.list()).toHaveLength(2);
+
+    await pm.deleteAll();
+  });
+
+  test("should handle startEcosystem idempotently", async () => {
+    const { ProcessManager } = await import("../src/process-manager");
+    const pm = new ProcessManager();
+    const scriptA = join(TEST_DIR, "eco-a.ts");
+    const scriptB = join(TEST_DIR, "eco-b.ts");
+    await writeFile(scriptA, "setInterval(() => {}, 1000);");
+    await writeFile(scriptB, "setInterval(() => {}, 1000);");
+
+    const ecoConfig = {
+      apps: [
+        { name: "eco-app-a", script: scriptA },
+        { name: "eco-app-b", script: scriptB },
+      ],
+    };
+
+    const firstEco = await pm.startEcosystem(ecoConfig);
+    expect(firstEco).toHaveLength(2);
+    expect(pm.list()).toHaveLength(2);
+
+    // Second start of ecosystem while running
+    const secondEco = await pm.startEcosystem(ecoConfig);
+    expect(secondEco).toHaveLength(2);
+    expect(pm.list()).toHaveLength(2);
+
+    // Stop one app in ecosystem
+    await pm.stop("eco-app-a");
+    expect(pm.describe("eco-app-a")[0]!.status).toBe("stopped");
+    expect(pm.describe("eco-app-b")[0]!.status).toBe("online");
+
+    // Starting ecosystem again resumes eco-app-a and keeps eco-app-b
+    const thirdEco = await pm.startEcosystem(ecoConfig);
+    expect(thirdEco).toHaveLength(2);
+    expect(pm.describe("eco-app-a")[0]!.status).toBe("online");
+    expect(pm.describe("eco-app-b")[0]!.status).toBe("online");
+    expect(pm.list()).toHaveLength(2);
+
+    await pm.deleteAll();
+  });
+});

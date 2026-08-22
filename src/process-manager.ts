@@ -73,7 +73,54 @@ import type { ReadableStreamController } from "bun";
     if (!(await Bun.file(options.script).exists())) {
       throw new Error(`Script not found: ${options.script}`);
     } 
- 
+
+    const existing = this.findExistingProcesses(options, options.script);
+    if (existing.length > 0) {
+      for (const container of existing) {
+        if (
+          container.status !== "online" &&
+          container.status !== "launching" &&
+          container.status !== "waiting-restart"
+        ) {
+          container.config.autorestart = options.autorestart !== false;
+          container.unstableRestarts = 0;
+          if (options.env) {
+            container.config.env = { ...container.config.env, ...options.env };
+          }
+          if (options.args && options.args.length > 0) {
+            container.config.args = options.args;
+          }
+          if (options.cwd) {
+            container.config.cwd = options.cwd;
+          }
+          await container.start();
+        }
+        states.push(container.getState());
+      }
+
+      if (isCluster && existing.length < resolvedInstances) {
+        const baseName = options.name || path.basename(options.script).replace(/\.\w+$/, "") || `app-${this.nextId}`;
+        for (let i = existing.length; i < resolvedInstances; i++) {
+          const id = this.nextId++;
+          const name = `${baseName}-${i}`;
+          const config = this.buildConfig(id, name, options, resolvedInstances, i);
+          const container = new ProcessContainer(
+            id,
+            config,
+            this.logManager,
+            this.clusterManager,
+            this.healthChecker,
+            this.cronManager
+          );
+          this.processes.set(id, container);
+          await container.start();
+          states.push(container.getState());
+        }
+      }
+
+      return states;
+    }
+
     if (isCluster) {
       // In cluster mode, each instance is a separate container
       for (let i = 0; i < resolvedInstances; i++) {
@@ -468,12 +515,43 @@ import type { ReadableStreamController } from "bun";
        return proc ? [proc] : [];
      }
  
-     // Match by name or namespace
-     return Array.from(this.processes.values()).filter(
-       (p) =>
-         p.name === target ||
-         p.name.startsWith(`${target}-`) ||
-         p.config.namespace === target
-     );
-   }
- }
+      // Match by name or namespace
+      return Array.from(this.processes.values()).filter(
+        (p) =>
+          p.name === target ||
+          p.name.startsWith(`${target}-`) ||
+          p.config.namespace === target
+      );
+    }
+
+    private findExistingProcesses(options: StartOptions, scriptPath: string): ProcessContainer[] {
+      if (options.name) {
+        const targetName = options.name;
+        const clusterRegex = new RegExp(`^${this.escapeRegex(targetName)}-\\d+$`);
+        return Array.from(this.processes.values()).filter(
+          (p) =>
+            p.name === targetName ||
+            clusterRegex.test(p.name) ||
+            p.config.name === targetName
+        );
+      }
+
+      const derivedName = path.basename(scriptPath).replace(/\.\w+$/, "");
+      const clusterRegex = new RegExp(`^${this.escapeRegex(derivedName)}-\\d+$`);
+
+      // First match by exact script path
+      const matchedByScript = Array.from(this.processes.values()).filter(
+        (p) => p.config.script === scriptPath
+      );
+      if (matchedByScript.length > 0) return matchedByScript;
+
+      // Next match by derived name
+      return Array.from(this.processes.values()).filter(
+        (p) => p.name === derivedName || clusterRegex.test(p.name)
+      );
+    }
+
+    private escapeRegex(str: string): string {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
